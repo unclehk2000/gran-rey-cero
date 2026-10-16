@@ -1,0 +1,1541 @@
+//@version=6
+// This Source Code Form is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Unclehk2000
+//
+// Gran Rey Cero (王虚の閃光) · Models 7–8: CPI days (released 08:30 ET).
+// The model's own structure on the chart: stage 1 (the dealing range built in the hour before the release, the structure
+// the release tests), yesterday's RTH close, the first side of the dealing range taken after the release, the 08:50 line
+// between the release push and stage 2, the 08:30–09:00 window (full-height lines and shading every weekday, strongest on
+// CPI days, with the day's wording held above price), the window's high / low box on CPI days and the day after, and every
+// CPI 08:30 candle kept and extended to the right, labelled wild / average / quiet against past CPI candles.
+// Price chart: two PO3-style candles to the right of price. The daily slot is the model candle (the typical OHLC of this
+// event's days since 2018, scaled to today's ADR20 and anchored at today's open) with today's live candle filling it
+// from inside; the weekly slot is the live week. Each carries a small chip with its range in points. The model candle
+// is a map of typical size, not a forecast of direction.
+// Indicator pane: the event clock. Today's running range (or net move from the 18:00 open) drawn live against the typical
+// path of this event's days, half-hour by half-hour, with a card that reads the clock: where today stands, how much of
+// the day these events have usually done by now, and their busiest half hour.
+// Cards (price chart, Desktop or Mobile layout): the event card (a checklist of what held, or a tally of the last N event
+// days with this week's and month's premium / discount octant), a VIX card and a DXY card with the macro reads that held.
+// Built for NQ / MNQ and ES / MES. Every number was recomputed on their 1-minute data, Jan 2018 – Oct 2026 (ES to Aug 2026);
+// a ✓ row held in 2018–24 and again in 2025–26 (p < 0.05 over the full sample, same side in both periods).
+// Release dates were checked against the BLS and Federal Reserve schedules and are loaded to Dec 2027; update once a year.
+// Candle idea after PO3-style HTF candle indicators; clock after Kyōka Suigetsu. Written from scratch.
+// Concepts: ICT (Michael J. Huddleston).
+
+indicator("Gran Rey Cero", "Gran Rey", overlay = false, max_boxes_count = 300, max_lines_count = 400, max_labels_count = 400, max_polylines_count = 60)
+
+TZ = "America/New_York"
+
+// ═══════════════════════════════════════════════════════════════ Inputs
+grpW = "View"
+paneI   = input.string("Event clock", "Pane", options = ["Event clock", "Cards only"], group = grpW, tooltip = "What the indicator pane shows. Event clock: today's running range (or net move) against CPI days at the same time of day. Cards only: an empty pane for the clock card if you keep it there.", display = display.none)
+clkMet  = input.string("Range", "Clock measure", options = ["Range", "Net move"], group = grpW, tooltip = "Range: the day's high − low so far. Net move: price − the 18:00 open. Both in points, against the same measure on this event's days (2018–26), scaled to today's ADR20 of the trading day. Needs an intraday chart of 60 minutes or lower.", display = display.none)
+themeI  = input.string("Auto", "Theme", options = ["Auto", "Dark", "Light"], group = grpW, tooltip = "Auto follows the chart background.", display = display.none)
+layI    = input.string("Desktop", "Layout", options = ["Desktop", "Mobile"], group = grpW, tooltip = "Desktop: the event, VIX and DXY cards on the price chart and the clock card, every row.\nMobile: one narrow card for a phone screen. A header with the next or current event, a NOW row that reads the clock, the held rows (or the tally) in short form, and one line each for VIX and DXY. The clock card folds into the NOW row; the DXY range battery, the 4-week row and 10Y are left out. For a phone, use a separate chart layout set to Mobile, since layouts sync across devices.", display = display.none)
+crdSzI  = input.string("Small", "Card text", options = ["Tiny", "Small", "Normal"], group = grpW, display = display.none)
+
+grpE = "Event day"
+anchorI  = input.string("Trading day (18:00)", "Day", options = ["Trading day (18:00)", "NY midnight", "RTH (09:30–16:14)"], group = grpE, tooltip = "Which day the daily candle and its model use.\nTrading day: the CME daily candle, 18:00 → 17:00 ET.\nNY midnight: 00:00 → 17:00 ET.\nRTH: 09:30 → 16:14 ET (close of the 16:14 bar).\nThe clock always runs on the trading day.", display = display.none)
+showGh   = input.bool(true, "Model candle", group = grpE, inline = "g1", display = display.none)
+offDayI  = input.string("Next event's model", "On other days", options = ["Next event's model", "Hide"], group = grpE, inline = "g1", tooltip = "The model candle always uses this indicator's own event. On its event days it is anchored to today's open. On other days it can show the next event's model, dimmed, around today's candle (a size reference, not a forecast), or be hidden.", display = display.none)
+showPL   = input.bool(true, "Model high / low lines", group = grpE, inline = "g2", tooltip = "Dotted lines from the day's start to the model candle's high and low, on event days.", display = display.none)
+markEv   = input.bool(true, "Mark releases", group = grpE, inline = "g3", display = display.none)
+markD    = input.int(90, "and model structure for the last (days)", minval = 5, maxval = 400, group = grpE, inline = "g3", display = display.none)
+
+grpS = "Model structure"
+showStr = input.bool(true, "Draw the model's levels and windows", group = grpS, display = display.none)
+cLvl    = input.color(#ffb300, "Levels", group = grpS, inline = "s1", display = display.none)
+lblI    = input.string("Tiny", "Labels", options = ["Tiny", "Small", "Normal"], group = grpS, inline = "s1", display = display.none)
+showDR0 = input.bool(true, "Pre-CPI range 07:30–08:29", group = grpS, inline = "d0", display = display.none)
+cDR0    = input.color(#90a4ae, "", group = grpS, inline = "d0", display = display.none)
+stDR0   = input.string("Dashed", "", options = ["Solid", "Dashed", "Dotted"], group = grpS, inline = "d0", tooltip = "Stage 1: the hour before the release, drawn live from 07:30. It stops at the bar where the release first takes one of its sides (marked 1st sweep). The first side taken went on to be the day's bigger move from 08:30 on 70% of NQ CPI days (67% ES) vs 56% on normal days.", display = display.none)
+showDR  = input.bool(true, "CPI dealing range 08:30–09:00", group = grpS, inline = "d1", display = display.none)
+cDR     = input.color(#ffb300, "", group = grpS, inline = "d1", display = display.none)
+stDR    = input.string("Solid", "", options = ["Solid", "Dashed", "Dotted"], group = grpS, inline = "d1", display = display.none)
+wDR     = input.int(1, "", minval = 1, maxval = 4, group = grpS, inline = "d1", tooltip = "The 08:30–09:00 high and low, drawn live through the window, then fixed at 09:00 and carried right to the end you pick.", display = display.none)
+drEq    = input.bool(true, "CE (50%)", group = grpS, inline = "d2", display = display.none)
+drFill  = input.bool(false, "Fill", group = grpS, inline = "d2", display = display.none)
+drExt   = input.bool(true, "±0.25", group = grpS, inline = "d2", display = display.none)
+drEnd   = input.string("17:00", "Run to", options = ["11:00", "16:14", "17:00"], group = grpS, inline = "d2", tooltip = "17:00 = the end of the CME trading day.", display = display.none)
+showWkO = input.bool(true, "NQ · ES · RTY vs week open at 08:30 and 09:30", group = grpS, tooltip = "One readout under the release: each index against its own week open (Sunday 18:00), at 08:30 and at the 09:30 open, the SMT idea behind Genjutsu Kai. Micro charts read MNQ · MES · M2K.", display = display.none)
+relLenI = input.string("1 min", "08:30 candle", options = ["1 min", "5 min", "15 min"], group = grpS, inline = "s2", tooltip = "The CPI release candle kept and extended to the right. On a chart above this timeframe the bar holding 08:30 is used. Wild / average / quiet = top / middle / bottom third of CPI release candles of the same length since 2018, as a share of ADR20.", display = display.none)
+relKeep = input.int(6, "keep last", minval = 1, maxval = 30, group = grpS, inline = "s2", display = display.none)
+showWin = input.bool(false, "08:30–09:00 box", group = grpS, inline = "s3", display = display.none)
+showYC  = input.bool(true, "Yesterday's RTH close", group = grpS, inline = "s3", display = display.none)
+winLn   = input.bool(true, "08:30 / 09:00 lines", group = grpS, inline = "s4", display = display.none)
+cWinL   = input.color(#2962ff, "", group = grpS, inline = "s4", display = display.none)
+winLW   = input.int(3, "width", minval = 1, maxval = 10, group = grpS, inline = "s4", display = display.none)
+winBg   = input.bool(true, "Shade the window", group = grpS, inline = "s5", display = display.none)
+winDays = input.string("Every weekday", "on", options = ["Every weekday", "CPI days and the day after", "CPI days"], group = grpS, inline = "s5", tooltip = "Full-height lines at 08:30 and 09:00 ET with the window shaded between them, in the line colour: strongest on CPI days, lighter on the day after, faint on other weekdays.", display = display.none)
+showNot = input.bool(true, "CPI flag and day wording", group = grpS, inline = "s6", display = display.none)
+cNote   = input.color(#e53935, "", group = grpS, inline = "s6", display = display.none)
+noteSzI = input.string("Small", "", options = ["Tiny", "Small", "Normal", "Large", "Huge"], group = grpS, inline = "s6", display = display.none)
+noteUp  = input.int(12, "height", minval = 0, maxval = 300, group = grpS, inline = "s6", tooltip = "CPI day: a flag above the release bar, tied by a stem to the 08:30 open; it rises with the release push to 09:00. The day after and other days get a quiet tag instead. Height = % of ADR20 above the bar's high. Leave a wording box empty to hide that day's tag.", display = display.none)
+txCPI   = input.string("here we go folks", "CPI day", group = grpS, display = display.none)
+txAft   = input.string("you just missed me folks", "Day after", group = grpS, display = display.none)
+txOth   = input.string("nothing to see here folks", "Other days", group = grpS, display = display.none)
+
+grpC = "PO3 candles"
+showWk = input.bool(true, "Weekly candle", group = grpC, inline = "c0", display = display.none)
+showCh = input.bool(true, "Chips", group = grpC, inline = "c0", display = display.none)
+chSzI  = input.string("Small", "", options = ["Tiny", "Small", "Normal"], group = grpC, inline = "c0", tooltip = "Chips: each candle's range in points. The daily chip adds the model's range and how much of it today has filled.", display = display.none)
+offI   = input.int(24, "Offset", minval = 1, maxval = 100, group = grpC, inline = "c1", display = display.none)
+widI   = input.int(8, "Width", minval = 2, maxval = 40, group = grpC, inline = "c1", display = display.none)
+gapI   = input.int(10, "Gap", minval = 1, maxval = 40, group = grpC, inline = "c1", tooltip = "Offset from the last bar, today's candle width and the gap between the daily and weekly slots, in bars. The model candle is 6 bars wider than today's candle.", display = display.none)
+cUp    = input.color(#4caf50, "Body", group = grpC, inline = "c2", display = display.none)
+cDn    = input.color(#131722, "", group = grpC, inline = "c2", display = display.none)
+cWk    = input.color(#787b86, "Wick", group = grpC, inline = "c2", display = display.none)
+cGh    = input.color(#e53935, "Model", group = grpC, inline = "c2", display = display.none)
+showPx = input.bool(true, "Prices", group = grpC, inline = "c3", display = display.none)
+pxSzI  = input.string("Small", "", options = ["Tiny", "Small", "Normal"], group = grpC, inline = "c3", display = display.none)
+showLv = input.bool(true, "Today's open / high / low lines", group = grpC, display = display.none)
+
+grpK = "Event clock (indicator pane)"
+clkOn  = paneI == "Event clock"
+kBands = input.bool(true, "10–90 and 25–75 bands", group = grpK, display = display.none)
+kRef   = input.bool(true, "Reference path", group = grpK, tooltip = "On event days: the normal-day median. On other days: the next event's median, so you can see how its day usually unfolds.", display = display.none)
+kPast  = input.bool(true, "Earlier days, faded", group = grpK, display = display.none)
+paneV = "Event clock"
+
+grpR = "Cards"
+crdPos  = input.string("Top right", "Price-chart cards", options = ["Top left", "Top center", "Top right", "Middle left", "Middle right", "Bottom left", "Bottom center", "Bottom right"], group = grpR, tooltip = "The event, VIX and DXY cards stack in one corner of the price chart.", display = display.none)
+showEv  = input.bool(true, "Event card", group = grpR, inline = "r1", display = display.none)
+evMode  = input.string("Checklist", "", options = ["Checklist", "Tally"], group = grpR, inline = "r1", display = display.none)
+talN    = input.int(12, "last", minval = 3, maxval = 60, group = grpR, inline = "r1", tooltip = "Checklist: only results that held in 2018–24 and again in 2025–26 (p < 0.05 over the full sample, same side in both periods).\nTally: the last N event days (up / down closes, average RTH gap) and where price sits in this week's and this month's range, in octants: top quarter (octants 7–8) = premium, bottom quarter (1–2) = discount.", display = display.none)
+showVx  = input.bool(true, "VIX card", group = grpR, inline = "r2", display = display.none)
+showDx  = input.bool(true, "DXY card", group = grpR, inline = "r2", display = display.none)
+showCk  = input.bool(true, "Clock card", group = grpR, inline = "r3", display = display.none)
+ckOn    = input.string("Indicator pane", "", options = ["Price chart", "Indicator pane"], group = grpR, inline = "r3", display = display.none)
+ckPos   = input.string("Top right", "", options = ["Top left", "Top center", "Top right", "Middle left", "Middle right", "Bottom left", "Bottom center", "Bottom right"], group = grpR, inline = "r3", display = display.none)
+
+grpM = "VIX · DXY · 10Y"
+vixSym  = input.symbol("CBOE:VIX", "VIX", group = grpM, inline = "m0", display = display.none)
+vixSize = input.bool(false, "Size the model candle by VIX", group = grpM, inline = "m0", tooltip = "Scales the event's median range by today's VIX: its prior close against its 20-day average and against ADR20. Fitted on 2018–24, it lifted the out-of-sample (2025–26) day-range R² from 0.24 to 0.34 on NQ and from 0.25 to 0.41 on ES. A size map, not a direction.", display = display.none)
+dxySym  = input.symbol("TVC:DXY", "DXY", group = grpM, inline = "m1", display = display.none)
+ylSym   = input.symbol("TVC:US10Y", "10Y", group = grpM, inline = "m1", tooltip = "DXY rows tested on DXY futures over the last three years (Oct 2023 → Aug 2026), first two years then the last one. US10Y: live readout only, no tested edge.", display = display.none)
+showFd = false
+
+// ═══════════════════════════════════════════════════════════════ Data
+// Release dates (ET), verified 11 Oct 2026. FOMC = decision day (statement 14:00). CPI and NFP at 08:30.
+// 2025 lapse: Oct 2025 CPI and jobs reports never published; later releases moved (all as published by BLS).
+// UPDATE ONCE A YEAR: add the next year's FOMC dates (federalreserve.gov, out by mid-year) and BLS CPI / Employment
+// Situation dates (bls.gov/schedule, out each autumn), then raise LAST_DATE.
+S_FOMC = "20180131,20180321,20180502,20180613,20180801,20180926,20181108,20181219,"
+     + "20190130,20190320,20190501,20190619,20190731,20190918,20191030,20191211,"
+     + "20200129,20200429,20200610,20200729,20200916,20201105,20201216,20210127,"
+     + "20210317,20210428,20210616,20210728,20210922,20211103,20211215,20220126,"
+     + "20220316,20220504,20220615,20220727,20220921,20221102,20221214,20230201,"
+     + "20230322,20230503,20230614,20230726,20230920,20231101,20231213,20240131,"
+     + "20240320,20240501,20240612,20240731,20240918,20241107,20241218,20250129,"
+     + "20250319,20250507,20250618,20250730,20250917,20251029,20251210,20260128,"
+     + "20260318,20260429,20260617,20260729,20260916,20261028,20261209,20270127,"
+     + "20270317,20270428,20270609,20270728,20270915,20271027,20271208"
+S_CPI  = "20180112,20180214,20180313,20180411,20180510,20180612,20180712,20180810,20180913,20181011,20181114,20181212,"
+     + "20190111,20190213,20190312,20190410,20190510,20190612,20190711,20190813,20190912,20191010,20191113,20191211,"
+     + "20200114,20200213,20200311,20200410,20200512,20200610,20200714,20200812,20200911,20201013,20201112,20201210,"
+     + "20210113,20210210,20210310,20210413,20210512,20210610,20210713,20210811,20210914,20211013,20211110,20211210,"
+     + "20220112,20220210,20220310,20220412,20220511,20220610,20220713,20220810,20220913,20221013,20221110,20221213,"
+     + "20230112,20230214,20230314,20230412,20230510,20230613,20230712,20230810,20230913,20231012,20231114,20231212,"
+     + "20240111,20240213,20240312,20240410,20240515,20240612,20240711,20240814,20240911,20241010,20241113,20241211,"
+     + "20250115,20250212,20250312,20250410,20250513,20250611,20250715,20250812,20250911,20251024,20251218,20260113,"
+     + "20260213,20260311,20260410,20260512,20260610,20260714,20260812,20260911,20261014,20261110,20261210,20270113,"
+     + "20270211,20270310,20270413,20270512,20270610,20270714,20270811,20270914,20271014,20271110,20271210"
+S_NFP  = "20180105,20180202,20180309,20180406,20180504,20180601,20180706,20180803,20180907,20181005,20181102,20181207,"
+     + "20190104,20190201,20190308,20190405,20190503,20190607,20190705,20190802,20190906,20191004,20191101,20191206,"
+     + "20200110,20200207,20200306,20200403,20200508,20200605,20200702,20200807,20200904,20201002,20201106,20201204,"
+     + "20210108,20210205,20210305,20210402,20210507,20210604,20210702,20210806,20210903,20211008,20211105,20211203,"
+     + "20220107,20220204,20220304,20220401,20220506,20220603,20220708,20220805,20220902,20221007,20221104,20221202,"
+     + "20230106,20230203,20230310,20230407,20230505,20230602,20230707,20230804,20230901,20231006,20231103,20231208,"
+     + "20240105,20240202,20240308,20240405,20240503,20240607,20240705,20240802,20240906,20241004,20241101,20241206,"
+     + "20250110,20250207,20250307,20250404,20250502,20250606,20250703,20250801,20250905,20251120,20251216,20260109,"
+     + "20260211,20260306,20260403,20260508,20260605,20260702,20260807,20260904,20261002,20261106,20261204,20270108,"
+     + "20270205,20270305,20270402,20270507,20270604,20270702,20270806,20270903,20271008,20271105,20271203"
+LAST_DATE = 20271210
+
+// Day shapes, ADR20 units, Jan 2018 – Oct 2026 (ES to Aug 2026). Rows: FOMC, NFP, CPI, day after FOMC, FOMC day 1,
+// NFP week Mon–Thu, normal. Fields: n, P(up), reach-above q25/50/75, reach-below q25/50/75, close median,
+// range q25/50/75, share of highs by time bucket ×6, share of lows by time bucket ×6.
+NQ_TD  = "68,0.559,0.307,0.558,0.997,0.183,0.344,0.704,0.063,0.865,1.114,1.439,0.074,0.000,0.118,0.029,0.118,0.662,0.206,0.029,0.029,0.015,0.118,0.603;"
+     + "98,0.500,0.165,0.444,0.822,0.137,0.433,0.850,0.001,0.792,1.058,1.393,0.214,0.010,0.071,0.133,0.214,0.357,0.224,0.010,0.061,0.173,0.204,0.327;"
+     + "96,0.562,0.288,0.542,0.825,0.158,0.381,0.790,0.153,0.774,1.050,1.323,0.104,0.000,0.094,0.177,0.240,0.385,0.177,0.052,0.115,0.146,0.198,0.312;"
+     + "67,0.552,0.296,0.575,1.059,0.075,0.514,0.761,0.107,0.909,1.221,1.600,0.209,0.045,0.075,0.045,0.224,0.403,0.254,0.000,0.134,0.090,0.194,0.328;"
+     + "64,0.516,0.126,0.354,0.644,0.210,0.402,0.710,0.006,0.711,0.865,1.112,0.250,0.016,0.109,0.094,0.141,0.391,0.172,0.016,0.109,0.016,0.328,0.359;"
+     + "323,0.560,0.230,0.424,0.683,0.194,0.395,0.702,0.089,0.702,0.910,1.293,0.146,0.012,0.127,0.046,0.241,0.427,0.235,0.028,0.093,0.062,0.254,0.328;"
+     + "1342,0.549,0.203,0.383,0.675,0.169,0.361,0.704,0.068,0.656,0.879,1.180,0.167,0.016,0.106,0.069,0.226,0.417,0.242,0.016,0.109,0.066,0.248,0.319"
+NQ_MID = "67,0.478,0.251,0.581,0.907,0.203,0.485,0.751,-0.045,0.883,1.155,1.384,0.015,0.134,0.030,0.104,0.716,0.000,0.104,0.090,0.045,0.134,0.627,0.000;"
+     + "98,0.500,0.213,0.461,0.804,0.184,0.415,0.852,0.012,0.797,1.064,1.370,0.082,0.133,0.153,0.265,0.367,0.000,0.071,0.143,0.235,0.214,0.337,0.000;"
+     + "97,0.608,0.292,0.515,0.892,0.155,0.378,0.735,0.139,0.770,1.026,1.351,0.021,0.144,0.186,0.247,0.402,0.000,0.103,0.196,0.175,0.206,0.320,0.000;"
+     + "66,0.515,0.133,0.526,0.953,0.238,0.524,0.891,0.018,0.888,1.101,1.645,0.182,0.121,0.045,0.227,0.424,0.000,0.061,0.212,0.091,0.242,0.394,0.000;"
+     + "64,0.484,0.145,0.424,0.704,0.222,0.479,0.735,-0.018,0.726,0.884,1.139,0.078,0.188,0.109,0.188,0.438,0.000,0.125,0.156,0.016,0.328,0.375,0.000;"
+     + "324,0.565,0.219,0.413,0.669,0.183,0.398,0.719,0.095,0.708,0.914,1.268,0.074,0.157,0.049,0.272,0.448,0.000,0.117,0.179,0.074,0.281,0.349,0.000;"
+     + "1327,0.553,0.195,0.386,0.665,0.172,0.384,0.702,0.063,0.659,0.867,1.170,0.081,0.151,0.083,0.244,0.442,0.000,0.115,0.177,0.080,0.290,0.338,0.000"
+NQ_RTH = "68,0.485,0.333,0.534,0.900,0.254,0.504,0.864,-0.024,0.975,1.138,1.512,0.103,0.118,0.029,0.750,0.000,0.000,0.206,0.103,0.103,0.588,0.000,0.000;"
+     + "98,0.531,0.222,0.464,0.742,0.128,0.303,0.859,0.045,0.746,0.948,1.392,0.276,0.214,0.122,0.388,0.000,0.000,0.398,0.173,0.122,0.306,0.000,0.000;"
+     + "98,0.551,0.202,0.451,0.766,0.161,0.405,0.823,0.055,0.676,0.948,1.336,0.265,0.214,0.153,0.367,0.000,0.000,0.378,0.163,0.112,0.347,0.000,0.000;"
+     + "67,0.493,0.181,0.420,0.811,0.176,0.489,0.830,-0.026,0.764,1.081,1.451,0.284,0.209,0.075,0.433,0.000,0.000,0.284,0.254,0.104,0.358,0.000,0.000;"
+     + "64,0.547,0.134,0.330,0.592,0.249,0.435,0.682,0.107,0.680,0.820,1.055,0.312,0.109,0.188,0.391,0.000,0.000,0.328,0.188,0.156,0.328,0.000,0.000;"
+     + "324,0.580,0.188,0.417,0.750,0.179,0.352,0.724,0.122,0.694,0.930,1.333,0.253,0.207,0.090,0.451,0.000,0.000,0.306,0.272,0.136,0.287,0.000,0.000;"
+     + "1338,0.546,0.180,0.385,0.654,0.165,0.369,0.724,0.070,0.656,0.885,1.177,0.279,0.187,0.133,0.401,0.000,0.000,0.333,0.230,0.133,0.303,0.000,0.000"
+ES_TD  = "68,0.529,0.315,0.492,0.929,0.195,0.386,0.793,0.053,0.838,1.179,1.454,0.103,0.029,0.074,0.015,0.118,0.662,0.176,0.015,0.044,0.015,0.088,0.662;"
+     + "98,0.510,0.240,0.481,0.878,0.120,0.459,0.872,0.029,0.837,1.044,1.494,0.163,0.010,0.041,0.102,0.296,0.388,0.265,0.020,0.051,0.184,0.184,0.296;"
+     + "98,0.551,0.258,0.490,0.821,0.157,0.407,0.810,0.124,0.752,1.001,1.300,0.143,0.000,0.061,0.224,0.173,0.398,0.163,0.020,0.122,0.184,0.184,0.327;"
+     + "67,0.567,0.307,0.585,0.958,0.186,0.518,0.959,0.189,0.859,1.209,1.729,0.179,0.060,0.104,0.060,0.194,0.403,0.284,0.000,0.149,0.075,0.164,0.328;"
+     + "64,0.469,0.174,0.363,0.569,0.221,0.421,0.705,-0.041,0.673,0.829,1.144,0.188,0.016,0.156,0.078,0.250,0.312,0.156,0.031,0.156,0.062,0.219,0.375;"
+     + "324,0.562,0.209,0.380,0.707,0.193,0.362,0.726,0.068,0.665,0.888,1.301,0.170,0.015,0.127,0.056,0.176,0.457,0.247,0.028,0.093,0.068,0.222,0.343;"
+     + "1416,0.549,0.200,0.378,0.649,0.168,0.359,0.681,0.062,0.637,0.856,1.178,0.178,0.012,0.112,0.074,0.192,0.431,0.249,0.021,0.133,0.059,0.194,0.344"
+ES_MID = "68,0.441,0.256,0.461,0.862,0.224,0.496,0.962,-0.082,0.880,1.180,1.488,0.059,0.118,0.015,0.132,0.676,0.000,0.059,0.103,0.029,0.103,0.706,0.000;"
+     + "98,0.520,0.265,0.495,0.863,0.142,0.447,0.839,0.088,0.810,1.064,1.467,0.082,0.102,0.112,0.306,0.398,0.000,0.092,0.153,0.235,0.224,0.296,0.000;"
+     + "98,0.520,0.275,0.492,0.780,0.192,0.427,0.837,0.077,0.779,1.037,1.367,0.020,0.133,0.245,0.184,0.418,0.000,0.092,0.184,0.214,0.184,0.327,0.000;"
+     + "67,0.567,0.160,0.554,0.980,0.254,0.509,1.037,0.057,0.897,1.200,1.743,0.149,0.149,0.060,0.209,0.433,0.000,0.090,0.239,0.075,0.209,0.388,0.000;"
+     + "64,0.484,0.167,0.324,0.698,0.211,0.424,0.719,-0.031,0.653,0.887,1.159,0.062,0.203,0.109,0.266,0.359,0.000,0.109,0.203,0.062,0.250,0.375,0.000;"
+     + "324,0.543,0.202,0.385,0.682,0.188,0.365,0.762,0.087,0.670,0.900,1.271,0.086,0.173,0.065,0.201,0.475,0.000,0.139,0.185,0.074,0.241,0.361,0.000;"
+     + "1406,0.546,0.190,0.385,0.645,0.166,0.358,0.684,0.060,0.637,0.839,1.165,0.080,0.159,0.085,0.214,0.462,0.000,0.115,0.211,0.076,0.232,0.366,0.000"
+ES_RTH = "68,0.441,0.263,0.503,0.786,0.265,0.631,1.032,-0.103,0.882,1.221,1.672,0.088,0.132,0.059,0.721,0.000,0.000,0.176,0.059,0.059,0.706,0.000,0.000;"
+     + "98,0.582,0.229,0.419,0.833,0.113,0.318,0.948,0.115,0.690,1.056,1.437,0.276,0.184,0.173,0.367,0.000,0.000,0.367,0.224,0.102,0.306,0.000,0.000;"
+     + "98,0.551,0.214,0.380,0.661,0.198,0.414,0.914,0.041,0.697,0.944,1.290,0.255,0.235,0.184,0.327,0.000,0.000,0.306,0.214,0.112,0.367,0.000,0.000;"
+     + "67,0.478,0.157,0.406,0.827,0.218,0.529,1.002,-0.026,0.850,1.197,1.526,0.269,0.209,0.134,0.388,0.000,0.000,0.254,0.269,0.164,0.313,0.000,0.000;"
+     + "64,0.484,0.155,0.302,0.543,0.220,0.471,0.672,-0.022,0.596,0.841,1.058,0.344,0.125,0.172,0.359,0.000,0.000,0.281,0.188,0.203,0.328,0.000,0.000;"
+     + "324,0.574,0.193,0.416,0.706,0.158,0.383,0.712,0.093,0.634,0.879,1.257,0.213,0.201,0.117,0.469,0.000,0.000,0.287,0.256,0.130,0.327,0.000,0.000;"
+     + "1409,0.542,0.178,0.367,0.669,0.159,0.359,0.721,0.053,0.636,0.844,1.183,0.240,0.199,0.124,0.437,0.000,0.000,0.294,0.224,0.155,0.327,0.000,0.000"
+
+// Event clock, trading day 18:00 → 17:00 ET in 46 half-hour steps, ×1000 of ADR20 (trading day). Per day type (own
+// events, then normal): range q10/25/50/75/90 ×46, net move q10/25/50/75/90 ×46, median share of the day's range done ×46.
+CK_NQ = "43,52,59,72,78,86,91,104,106,111,114,117,120,123,125,128,147,150,154,170,187,187,190,192,192,194,194,194,215,412,412,441,448,507,529,556,584,584,610,611,615,615,619,627,627,627,"
+     + "55,67,82,91,107,113,117,124,129,135,140,141,146,149,158,161,174,183,206,225,237,243,247,247,268,281,281,286,330,483,492,585,614,634,668,680,688,693,693,703,721,737,761,774,774,774,"
+     + "73,94,104,119,144,169,185,204,210,212,212,225,228,228,241,246,275,291,315,326,330,344,368,374,380,393,394,407,435,629,664,762,813,881,906,921,928,966,967,980,985,996,1024,1032,1032,1050,"
+     + "103,131,163,179,212,238,261,285,305,308,316,332,332,332,335,370,376,397,407,411,420,432,475,487,487,509,517,527,564,853,860,977,1056,1092,1149,1182,1186,1205,1218,1246,1265,1265,1293,1293,1316,1323,"
+     + "141,190,241,257,288,334,347,379,383,405,436,465,465,495,498,498,498,527,546,577,606,643,672,672,681,690,703,703,746,1163,1182,1320,1388,1453,1544,1551,1714,1714,1714,1714,1714,1728,1757,1795,1795,1795,"
+     + "-66,-80,-90,-83,-91,-159,-160,-170,-173,-180,-210,-209,-232,-255,-237,-201,-183,-171,-212,-211,-233,-268,-285,-295,-319,-338,-334,-354,-321,-554,-546,-456,-640,-667,-738,-718,-679,-688,-745,-828,-848,-844,-800,-802,-836,-828,"
+     + "-34,-35,-40,-45,-54,-71,-60,-86,-106,-94,-105,-105,-93,-109,-89,-92,-114,-120,-108,-126,-81,-74,-86,-110,-112,-105,-100,-123,-107,-267,-212,-132,-200,-195,-237,-150,-129,-202,-207,-225,-237,-239,-271,-252,-211,-210,"
+     + "-5,3,-1,8,9,8,5,6,-5,-7,1,4,8,6,5,17,6,8,7,-5,32,45,37,45,39,23,26,64,69,131,141,134,147,126,181,180,203,204,166,168,126,167,145,78,172,153,"
+     + "35,55,60,57,78,81,79,81,81,69,84,79,95,101,101,103,134,144,135,140,152,154,161,157,166,188,198,193,224,359,349,440,485,453,548,503,474,495,553,580,555,576,561,569,564,577,"
+     + "76,100,134,117,148,150,153,186,183,185,189,203,193,183,205,209,241,240,228,237,243,245,270,319,268,292,300,302,355,607,607,797,764,797,863,881,855,869,864,919,898,879,938,949,923,961,"
+     + "72,92,107,123,142,168,180,204,213,214,221,232,232,241,254,270,279,283,303,329,338,341,341,351,370,378,387,387,421,664,670,773,825,888,917,944,953,956,962,988,1000,1000,1000,1000,1000,1000;"
+     + "50,59,68,80,97,107,118,126,132,135,138,140,145,146,148,156,164,171,189,196,207,216,226,231,235,240,247,258,271,281,286,352,384,406,423,434,447,455,464,475,486,490,493,505,520,522,"
+     + "65,77,91,107,129,144,154,165,175,180,184,187,189,192,198,207,219,227,247,259,275,283,289,297,304,312,320,328,336,351,361,439,483,510,534,553,571,575,593,601,615,625,631,647,654,656,"
+     + "96,115,134,150,181,197,212,227,241,249,257,261,268,271,277,286,299,314,338,352,367,382,389,397,404,418,429,436,449,471,485,581,631,675,703,725,748,769,778,795,805,822,840,860,875,879,"
+     + "149,173,204,223,265,296,316,335,345,355,366,372,380,383,391,402,422,440,467,482,507,521,540,548,563,576,586,604,623,654,669,774,856,898,939,964,990,1012,1029,1046,1068,1090,1118,1159,1170,1180,"
+     + "249,290,315,352,385,422,440,467,501,511,514,534,542,549,559,569,601,617,644,674,707,716,751,772,782,797,811,828,842,875,890,1020,1098,1165,1226,1264,1291,1324,1347,1388,1415,1443,1474,1507,1529,1544,"
+     + "-78,-96,-113,-127,-145,-175,-198,-200,-211,-218,-221,-224,-235,-234,-245,-245,-248,-270,-283,-292,-307,-307,-320,-333,-335,-326,-334,-372,-375,-390,-389,-481,-567,-587,-620,-621,-633,-661,-677,-676,-717,-721,-763,-769,-788,-803,"
+     + "-35,-40,-47,-56,-70,-71,-76,-81,-86,-90,-87,-89,-86,-92,-96,-98,-106,-102,-116,-124,-130,-130,-138,-142,-142,-145,-131,-146,-147,-156,-164,-208,-233,-243,-239,-256,-276,-269,-275,-270,-293,-311,-312,-307,-313,-314,"
+     + "4,6,11,12,16,14,16,14,16,15,14,14,14,16,17,20,27,25,27,28,39,40,34,44,37,45,49,54,42,42,38,32,32,48,43,51,57,52,43,43,59,58,62,59,66,68,"
+     + "46,53,66,72,88,97,108,113,116,120,121,125,124,131,133,145,154,159,168,177,182,192,196,201,195,206,201,201,210,228,225,282,310,303,331,360,358,372,373,396,406,415,417,437,439,455,"
+     + "96,109,130,142,170,184,199,222,222,228,236,245,251,247,253,266,276,288,297,318,341,342,350,352,364,357,359,369,399,421,425,525,546,589,612,657,671,697,716,724,718,735,785,779,778,792,"
+     + "113,134,157,180,214,232,253,268,283,290,301,306,310,317,327,335,351,368,395,414,433,445,458,471,483,493,505,526,542,575,588,706,767,819,860,893,916,934,954,978,1000,1000,1000,1000,1000,1000"
+CK_ES = "44,51,64,71,85,88,99,101,107,107,114,116,119,128,129,131,136,139,141,147,170,172,178,188,191,199,199,201,217,392,399,453,466,470,475,475,475,483,483,514,540,540,545,545,545,545,"
+     + "54,71,87,93,111,121,126,133,138,138,140,144,145,152,157,162,174,179,211,228,231,244,258,267,270,273,273,278,298,475,511,548,570,580,609,618,656,657,662,671,683,692,698,752,752,752,"
+     + "78,101,116,131,157,173,185,206,208,211,213,215,215,233,249,264,280,289,294,314,329,336,344,350,360,380,397,411,434,625,647,690,787,807,833,833,842,874,896,924,934,934,941,987,1001,1001,"
+     + "115,143,170,184,216,249,274,311,326,335,340,340,340,347,383,385,402,406,421,426,434,439,445,449,463,476,509,536,545,866,890,1000,1079,1124,1169,1175,1175,1205,1222,1236,1264,1274,1289,1297,1297,1300,"
+     + "148,207,271,289,321,347,357,392,397,419,425,440,444,447,447,469,479,485,535,574,593,662,698,719,748,748,748,748,756,1238,1238,1400,1506,1586,1634,1691,1730,1730,1730,1730,1755,1781,1880,2085,2092,2092,"
+     + "-60,-93,-105,-104,-135,-188,-186,-215,-220,-203,-253,-266,-289,-277,-281,-257,-225,-218,-243,-267,-263,-245,-245,-270,-293,-294,-352,-365,-291,-519,-597,-504,-659,-654,-841,-841,-683,-675,-677,-726,-851,-923,-845,-930,-878,-947,"
+     + "-28,-43,-49,-41,-63,-81,-73,-86,-102,-121,-107,-121,-118,-113,-101,-107,-103,-122,-124,-137,-114,-102,-112,-112,-108,-115,-122,-121,-104,-234,-226,-219,-216,-205,-239,-227,-169,-210,-208,-277,-244,-220,-295,-243,-279,-287,"
+     + "-8,4,2,3,-3,12,0,0,-9,-7,2,0,4,-1,1,0,5,15,8,-5,3,24,21,12,12,21,6,29,42,114,120,99,89,44,115,132,110,132,113,87,15,75,103,111,133,124,"
+     + "41,48,51,46,80,56,78,77,88,81,95,93,95,113,105,87,120,120,113,141,126,138,143,116,141,138,165,167,204,337,313,369,408,347,399,408,334,374,427,422,392,412,473,497,527,543,"
+     + "74,95,105,137,155,139,148,183,189,187,186,187,198,204,195,188,236,219,222,231,221,210,265,296,275,304,303,305,322,574,591,756,720,809,801,809,800,809,872,860,830,881,895,853,887,853,"
+     + "85,106,125,136,164,185,194,217,235,235,235,243,252,252,260,261,299,300,335,340,343,365,371,371,391,401,408,411,444,665,685,765,806,855,886,914,932,941,964,983,1000,1000,1000,1000,1000,1000;"
+     + "52,61,73,85,102,114,122,131,136,138,142,144,148,150,154,158,166,173,187,199,209,215,221,227,234,241,248,253,264,278,282,321,350,374,386,398,403,410,418,432,446,461,469,488,495,501,"
+     + "70,83,99,113,135,149,159,170,176,182,186,190,192,196,202,211,221,229,249,264,275,285,294,299,306,312,319,327,337,358,369,408,441,470,497,513,531,542,552,560,569,582,593,627,635,637,"
+     + "101,120,139,157,189,206,221,237,247,255,262,264,270,276,282,292,307,315,341,360,375,383,393,402,412,421,433,443,455,482,499,561,608,642,669,681,707,728,743,754,772,788,812,837,851,856,"
+     + "154,181,213,236,268,298,320,346,359,373,378,385,390,400,405,417,433,450,483,505,530,558,574,589,600,612,619,639,653,670,684,766,836,881,920,943,968,997,1027,1066,1081,1100,1125,1162,1173,1178,"
+     + "254,301,326,362,405,424,454,501,519,541,546,554,569,574,590,603,631,648,687,714,730,743,763,776,803,820,843,880,893,921,951,1048,1122,1184,1221,1271,1300,1330,1378,1414,1469,1483,1535,1605,1613,1631,"
+     + "-84,-101,-119,-130,-153,-172,-195,-207,-215,-219,-231,-228,-249,-240,-261,-260,-245,-268,-297,-303,-324,-335,-338,-339,-357,-352,-346,-377,-389,-415,-408,-472,-507,-531,-572,-587,-624,-663,-668,-685,-682,-716,-737,-773,-761,-777,"
+     + "-36,-42,-49,-62,-72,-77,-85,-86,-97,-99,-91,-97,-100,-102,-105,-104,-114,-116,-130,-141,-134,-139,-142,-144,-151,-145,-148,-147,-150,-159,-163,-175,-199,-207,-207,-231,-242,-240,-248,-255,-265,-266,-264,-301,-309,-315,"
+     + "6,9,10,11,10,10,12,16,16,12,17,15,17,18,12,16,20,24,26,32,33,33,32,36,38,45,37,39,37,40,42,46,39,50,46,51,42,41,51,57,60,75,68,60,68,62,"
+     + "48,56,66,71,88,99,105,105,114,118,122,123,128,129,132,142,154,156,162,174,189,191,200,201,203,204,216,222,220,234,230,261,285,294,303,307,337,340,348,374,387,396,409,426,436,439,"
+     + "98,109,130,146,174,184,196,211,219,225,234,239,248,255,252,265,279,273,298,318,339,352,352,360,363,377,375,373,392,413,420,489,530,553,599,614,638,676,687,723,730,748,761,794,795,800,"
+     + "119,143,168,192,226,246,264,279,296,306,314,319,327,331,341,348,367,380,408,430,454,469,483,494,511,519,534,549,568,596,612,688,755,790,827,864,890,908,937,963,987,1000,1000,1000,1000,1000"
+
+int  AN    = anchorI == "Trading day (18:00)" ? 0 : anchorI == "NY midnight" ? 1 : 2
+bool isES  = syminfo.root == "ES" or syminfo.root == "MES"
+bool isNQ  = syminfo.root == "NQ" or syminfo.root == "MNQ"
+string symR   = isES ? "ES" : "NQ"                           // whose statistics the cards show
+string symTag = isNQ or isES ? syminfo.root : syminfo.root + " (" + symR + " DATA)"
+NF  = 24
+CKB = 506
+
+parseDates(string s) =>
+    array<int> out = array.new<int>()
+    for p in str.split(s, ",")
+        out.push(int(str.tonumber(p)))
+    out
+parseStats(string s) =>
+    array<float> out = array.new<float>()
+    for r in str.split(s, ";")
+        for p in str.split(r, ",")
+            out.push(str.tonumber(p))
+    out
+parseMilli(string s) =>
+    array<float> out = array.new<float>()
+    for r in str.split(s, ";")
+        for p in str.split(r, ",")
+            out.push(str.tonumber(p) / 1000.0)
+    out
+
+var array<int>   FO = parseDates(S_FOMC)
+var array<int>   CP = parseDates(S_CPI)
+var array<int>   NP = parseDates(S_NFP)
+_ld_ST() => parseStats(isES ? (AN == 0 ? ES_TD : AN == 1 ? ES_MID : ES_RTH) : (AN == 0 ? NQ_TD : AN == 1 ? NQ_MID : NQ_RTH))
+var array<float> ST = _ld_ST()
+_ld_CK() => parseMilli(isES ? CK_ES : CK_NQ)
+var array<float> CK = _ld_CK()
+sv(int ty, int f) => ST.get(ty * NF + f)
+ck(int i, int m, int k, int j) => CK.get(i * CKB + m * 230 + k * 46 + j)
+ckSh(int i, int j) => CK.get(i * CKB + 460 + j)
+// value at a point inside half-hour step j (f = 0 → end of step j − 1, f = 1 → end of step j); the day starts at 0
+ckAt(int i, int m, int k, int j, float f) =>
+    float b  = ck(i, m, k, j)
+    float a0 = j > 0 ? ck(i, m, k, j - 1) : 0.0
+    a0 + (b - a0) * f
+ckShAt(int i, int j, float f) =>
+    float b  = ckSh(i, j)
+    float a0 = j > 0 ? ckSh(i, j - 1) : 0.0
+    a0 + (b - a0) * f
+
+// ═══════════════════════════════════════════════════════════════ Helpers
+bgLum = 0.299 * color.r(chart.bg_color) + 0.587 * color.g(chart.bg_color) + 0.114 * color.b(chart.bg_color)
+dark  = themeI == "Dark" or (themeI == "Auto" and bgLum < 128)
+cBg   = dark ? #0e1117 : #ffffff
+cTx   = dark ? #e6e9ef : #131722
+cSub  = dark ? #9aa3b5 : #4a5163
+cMu   = dark ? #5d6476 : #9aa1b2
+cWarn = #ff5252
+cHot  = dark ? #ff8a65 : #d84315
+cCold = dark ? #64b5f6 : #1565c0
+cOk   = dark ? #66bb6a : #2e7d32
+pxSz  = pxSzI == "Tiny" ? size.tiny : pxSzI == "Small" ? size.small : size.normal
+crdSz = crdSzI == "Tiny" ? size.tiny : crdSzI == "Small" ? size.small : size.normal
+chSz  = chSzI == "Tiny" ? size.tiny : chSzI == "Small" ? size.small : size.normal
+lbSz  = lblI == "Small" ? size.small : lblI == "Normal" ? size.normal : size.tiny
+lsOf(string s) => s == "Solid" ? line.style_solid : s == "Dotted" ? line.style_dotted : line.style_dashed
+posOf(string s) =>
+    switch s
+        "Top left"      => position.top_left
+        "Top center"    => position.top_center
+        "Top right"     => position.top_right
+        "Middle left"   => position.middle_left
+        "Middle right"  => position.middle_right
+        "Bottom left"   => position.bottom_left
+        "Bottom center" => position.bottom_center
+        => position.bottom_right
+
+dateKey(int t) => year(t, TZ) * 10000 + month(t, TZ) * 100 + dayofmonth(t, TZ)
+keyTime(int k) => timestamp(TZ, int(k / 10000), int(k / 100) % 100, k % 100, 12, 0)
+keyAt(int k, int m) => timestamp(TZ, int(k / 10000), int(k / 100) % 100, k % 100, int(m / 60), m % 60)
+addDays(int k, int n) => dateKey(keyTime(k) + n * 86400000)
+anchorKey(int an, int t) => an == 0 ? dateKey(t + 6 * 3600000) : dateKey(t)
+inWin(int an, int m) => an == 0 ? true : an == 1 ? m < 1020 : m >= 570 and m < 975
+winBars(int an) => an == 0 ? 92 : an == 1 ? 68 : 27
+pf(float v) => str.tostring(v, format.mintick)
+x2(float v) => str.tostring(v, "0.00") + "×"
+p0(float v) => str.tostring(v * 100, "0") + "%"
+fmtDay(int k) => str.format_time(keyTime(k), "EEE dd MMM", TZ)
+dowOf(int k) => dayofweek(keyTime(k), TZ)
+hhmm(int m) => (m / 60 < 10 ? "0" : "") + str.tostring(int(m / 60)) + ":" + (m % 60 < 10 ? "0" : "") + str.tostring(m % 60)
+// end of half-hour step j of the trading day, as minutes after midnight ET
+stepEnd(int j) => (1080 + 30 * (j + 1)) % 1440
+
+// day type: 0 FOMC · 1 NFP · 2 CPI · 3 day after FOMC · 4 FOMC day 1 · 5 NFP week Mon–Thu · 6 normal
+dayType(int k, int pk) =>
+    int  dw  = dowOf(k)
+    bool hol = false
+    if dw >= 2 and dw <= 5
+        for j = 1 to 6 - dw
+            if NP.includes(addDays(k, j))
+                hol := true
+    FO.includes(k) ? 0 : NP.includes(k) ? 1 : CP.includes(k) ? 2 : FO.includes(pk) ? 3 : FO.includes(addDays(k, 1)) ? 4 : hol ? 5 : 6
+typeShort(int ty) =>
+    switch ty
+        0 => "FOMC"
+        1 => "NFP"
+        2 => "CPI"
+        3 => "FOMC +1"
+        4 => "FOMC D1"
+        5 => "NFP week"
+        => "Normal"
+nextOf(array<int> a, int k) =>
+    int r = na
+    for d in a
+        if d >= k
+            r := d
+            break
+    r
+inDays(int k, int today) => int(math.round((keyTime(k) - keyTime(today)) / 86400000.0))
+whenTxt(int k, int today) =>
+    int dd = inDays(k, today)
+    fmtDay(k) + (dd == 0 ? " · today" : dd == 1 ? " · tomorrow" : " · in " + str.tostring(dd) + "d")
+// approximate percentile of x within q10 / q25 / q50 / q75 / q90
+pctQ(float x, float q10, float q25, float q50, float q75, float q90) =>
+    float p = na
+    if not na(x) and not na(q10) and not na(q90)
+        if x < q10
+            p := 5.0
+        else if x <= q25
+            p := 10.0 + 15.0 * (x - q10) / math.max(q25 - q10, 1e-9)
+        else if x <= q50
+            p := 25.0 + 25.0 * (x - q25) / math.max(q50 - q25, 1e-9)
+        else if x <= q75
+            p := 50.0 + 25.0 * (x - q50) / math.max(q75 - q50, 1e-9)
+        else if x <= q90
+            p := 75.0 + 15.0 * (x - q75) / math.max(q90 - q75, 1e-9)
+        else
+            p := 95.0
+    p
+pTxt(float p) => na(p) ? "—" : p <= 5.0 ? "<P10" : p >= 95.0 ? ">P90" : "≈P" + str.tostring(p, "0")
+pill(string s) => s == "Above" ? "▲ ABOVE" : s == "Below" ? "▼ BELOW" : s == "Inside" ? "● INSIDE" : "—"
+
+// ═══════════════════════════════════════════════════════════════ Model profiles (recomputed 2018–26)
+pfName(int k) =>
+    switch k
+        0 => "M7–8 GRAN REY CERO · CPI 08:30"
+        => ""
+ownTy(int k) =>
+    switch k
+        0 => 2
+        => 6
+chkRows(int k, bool es) =>
+    switch k
+        0 => es ? "08:30 candle (× ADR)~0.25×~0.03×~Median 08:30 one-minute candle ÷ ADR20: 0.25× on CPI days vs 0.03× on normal days, about 9× (2018–24 7.7×, 2025–26 12.8×).|08:30–09:00 adds (× ADR)~+0.19×~+0.03×~How much the median day range grows in the 08:30–09:00 half hour: +0.19× ADR on CPI days (2018–24 +0.19×, 2025–26 +0.28×) vs +0.03× on normal days.|VIX fell on the day~68%~55%~VIX closed below its prior close on 67 of 98 CPI days (2018–24 67%, 2025–26 74%) vs 55% of normal days, p 0.010. (The 1st-sweep row held on NQ but faded on ES in 2025–26, so it is not shown here.)" : "08:30 candle (× ADR)~0.27×~0.03×~Median 08:30 one-minute candle ÷ ADR20: 0.27× on CPI days vs 0.03× on normal days, about 9× (2018–24 8.4×, 2025–26 10.9×).|08:30–09:00 adds (× ADR)~+0.19×~+0.02×~How much the median day range grows in the 08:30–09:00 half hour: +0.19× ADR on CPI days (2018–24 +0.17×, 2025–26 +0.31×) vs +0.02× on normal days.|1st sweep side won~70%~56%~The first side of the 07:30–08:30 range taken after 08:30; the bigger of the moves from 08:30 went that way on 70% of CPI days vs 56% of normal days (2018–24 70% n79, 2025–26 71% n17, p 0.008).|VIX fell on the day~69%~55%~VIX closed below its prior close on 66 of 96 CPI days (2018–24 67%, 2025–26 76%) vs 55% of normal days, p 0.008: implied volatility tends to come out after the release."
+        => ""
+chkMax(bool es) => es ? 3 : 4
+TAL_NQ = "20180112,1,1,-17.25,-0.256;20180214,1,1,-41.25,-0.629;20180313,-1,-1,33.0,0.462;20180411,-1,1,-33.75,-0.51;20180510,1,1,21.25,0.308;20180612,1,1,11.25,0.157;20180712,1,1,42.0,0.579;20180810,-1,1,-52.0,-0.696;"
+     + "20180913,1,1,47.5,0.635;20181011,1,-1,10.5,0.149;20181114,-1,0,,;20181212,1,-1,92.0,1.37;20190111,-1,1,-30.25,-0.457;20190213,-1,-1,28.25,0.402;20190312,1,1,17.5,0.244;20190410,1,1,12.25,0.161;"
+     + "20190510,1,1,-31.25,-0.411;20190612,-1,-1,-22.0,-0.293;20190711,-1,-1,11.0,0.139;20190813,1,1,0.25,0.003;20190912,1,-1,47.25,0.599;20191010,1,1,-5.25,-0.068;20191113,-1,1,-31.5,-0.381;20191211,1,1,12.5,0.149;"
+     + "20200114,-1,-1,-11.25,-0.124;20200213,1,1,-75.5,-0.784;20200311,-1,-1,-165.5,-1.987;20200512,-1,-1,36.25,0.39;20200610,1,1,87.0,0.874;20200714,1,1,-111.75,-1.054;20200812,1,1,82.5,0.759;20200911,-1,-1,68.75,0.615;"
+     + "20201013,-1,-1,49.0,0.405;20201112,-1,-1,21.75,0.183;20201210,1,1,-81.0,-0.656;20210113,1,1,3.5,0.027;20210210,-1,-1,52.25,0.382;20210310,-1,-1,188.25,1.473;20210413,1,1,57.25,0.414;20210512,-1,-1,-184.25,-1.384;"
+     + "20210610,1,1,14.75,0.107;20210713,-1,1,-27.0,-0.181;20210811,-1,-1,57.25,0.381;20210914,-1,-1,53.75,0.348;20211013,1,1,133.25,0.912;20211110,-1,-1,-102.25,-0.631;20211210,1,1,127.5,0.79;20220112,1,-1,109.25,0.69;"
+     + "20220210,-1,-1,-301.75,-2.006;20220310,-1,1,-162.25,-1.182;20220412,-1,-1,199.5,1.425;20220511,-1,-1,-92.5,-0.75;20220610,-1,-1,-238.0,-1.938;20220713,-1,1,-232.75,-1.976;20220810,1,1,289.75,2.22;20220913,-1,-1,-389.25,-3.05;"
+     + "20221013,1,1,-322.0,-2.969;20221110,1,1,511.0,4.712;20221213,1,-1,473.0,4.044;20230112,1,1,19.75,0.172;20230214,1,1,-75.0,-0.598;20230314,1,1,129.0,1.08;20230412,-1,-1,76.0,0.581;20230510,1,1,102.5,0.773;"
+     + "20230613,1,1,105.0,0.709;20230712,1,1,169.0,1.107;20230810,1,-1,91.5,0.602;20230913,1,1,0.25,0.002;20231012,-1,-1,-17.5,-0.114;20231114,1,1,260.25,1.673;20231212,1,1,-7.75,-0.048;20240111,1,-1,34.25,0.202;"
+     + "20240213,-1,1,-297.0,-1.657;20240312,1,1,77.5,0.431;20240410,-1,1,-253.0,-1.376;20240515,1,1,97.0,0.527;20240612,1,1,147.5,0.766;20240711,-1,-1,16.0,0.077;20240814,1,1,21.0,0.11;20240911,1,1,55.5,0.294;"
+     + "20241010,-1,1,-75.75,-0.371;20241113,-1,1,-34.5,-0.163;20241211,1,1,162.5,0.758;20250115,1,1,275.75,1.315;20250212,1,1,-241.25,-1.107;20250312,1,-1,258.0,1.327;20250410,-1,-1,-453.75,-2.358;20250513,1,1,64.25,0.307;"
+     + "20250611,-1,-1,79.0,0.36;20250715,-1,-1,171.5,0.745;20250812,1,1,104.75,0.443;20250911,1,1,106.25,0.445;20251024,1,1,198.5,0.786;20251218,1,-1,287.75,1.162;20260113,-1,0,,;20260213,-1,1,,;"
+     + "20260311,-1,-1,2.0,0.008;20260410,1,-1,,;20260512,-1,-1,-178.0,-0.606;20260610,-1,-1,-250.25,-0.86;20260714,1,-1,356.5,1.21;20260812,1,-1,351.0,1.184;20260911,1,-1,264.25,0.906"
+TAL_END_NQ = 20261009
+TAL_ES = "20180112,1,1,1.75,0.063;20180214,1,1,-16.5,-0.62;20180313,-1,-1,12.0,0.43;20180411,-1,1,-15.75,-0.593;20180510,1,1,8.25,0.306;20180612,1,-1,4.0,0.144;20180712,1,1,15.75,0.568;20180810,-1,1,-16.5,-0.578;"
+     + "20180913,1,1,11.0,0.381;20181011,-1,-1,-0.25,-0.009;20181114,-1,-1,16.25,0.596;20181212,1,-1,31.0,1.174;20190111,1,1,-10.0,-0.386;20190213,1,-1,7.75,0.282;20190312,1,1,4.25,0.152;20190410,1,1,5.0,0.173;"
+     + "20190510,1,1,-12.5,-0.435;20190612,-1,-1,-3.25,-0.113;20190711,1,1,6.0,0.2;20190813,1,1,-0.25,-0.009;20190912,1,1,7.25,0.241;20191010,1,1,-2.25,-0.077;20191113,1,1,-11.75,-0.38;20191211,1,1,1.5,0.048;"
+     + "20200114,-1,1,-6.0,-0.182;20200213,-1,1,-18.25,-0.54;20200311,-1,-1,-61.25,-2.139;20200512,-1,-1,11.5,0.393;20200610,-1,-1,6.25,0.195;20200714,1,1,-18.75,-0.595;20200812,1,1,24.25,0.728;20200911,-1,-1,5.75,0.172;"
+     + "20201013,-1,-1,-10.75,-0.304;20201112,-1,-1,-16.25,-0.455;20201210,-1,1,-15.75,-0.429;20210113,1,1,-2.0,-0.053;20210210,-1,-1,15.0,0.384;20210310,1,1,28.5,0.736;20210413,1,1,-1.5,-0.036;20210512,-1,-1,-24.25,-0.586;"
+     + "20210610,1,1,10.75,0.255;20210713,-1,-1,-9.0,-0.206;20210811,1,-1,14.25,0.322;20210914,-1,-1,11.25,0.252;20211013,1,1,19.25,0.444;20211110,-1,-1,-15.5,-0.331;20211210,1,1,24.25,0.52;20220112,1,-1,18.25,0.388;"
+     + "20220210,-1,-1,-62.5,-1.365;20220310,-1,1,-46.0,-1.076;20220412,-1,-1,33.5,0.76;20220511,-1,-1,-7.5,-0.188;20220610,-1,-1,-69.25,-1.723;20220713,-1,1,-56.25,-1.472;20220810,1,1,71.25,1.726;20220913,-1,-1,-94.5,-2.287;"
+     + "20221013,1,1,-78.5,-2.186;20221110,1,1,136.5,3.632;20221213,1,-1,119.75,2.979;20230112,1,1,10.0,0.251;20230214,-1,1,-18.75,-0.452;20230314,1,1,45.0,1.165;20230412,-1,-1,19.0,0.459;20230510,1,-1,26.0,0.629;"
+     + "20230613,1,1,15.5,0.357;20230712,1,-1,41.0,0.917;20230810,-1,-1,16.5,0.367;20230913,1,1,-0.25,-0.006;20231012,-1,-1,-3.75,-0.085;20231114,1,1,59.5,1.344;20231212,1,1,-3.25,-0.07;20240111,-1,-1,7.5,0.156;"
+     + "20240213,-1,-1,-59.0,-1.172;20240312,1,1,18.75,0.366;20240410,-1,-1,-67.25,-1.277;20240515,1,1,25.0,0.475;20240612,1,-1,44.75,0.831;20240711,-1,-1,2.5,0.044;20240814,1,1,8.5,0.156;20240911,1,1,-1.5,-0.027;"
+     + "20241010,-1,1,-9.0,-0.154;20241113,1,1,-0.5,-0.008;20241211,1,1,23.5,0.388;20250115,1,1,73.75,1.252;20250212,-1,1,-61.5,-1.009;20250312,1,-1,48.5,0.868;20250410,-1,-1,-108.25,-1.974;20250513,1,1,5.5,0.094;"
+     + "20250611,-1,-1,18.0,0.298;20250715,-1,-1,29.5,0.468;20250812,1,1,26.75,0.418;20250911,1,1,20.25,0.31;20251024,1,1,45.75,0.675;20251218,1,-1,45.0,0.667;20260113,-1,-1,2.0,0.029;20260213,-1,1,-4.5,-0.066;"
+     + "20260311,-1,-1,-7.25,-0.107;20260410,1,-1,15.75,0.23;20260512,-1,1,-20.5,-0.276;20260610,-1,-1,-30.5,-0.413;20260714,1,1,20.0,0.265;20260812,1,-1,39.5,0.51"
+TAL_END_ES = 20260828
+TAL_NAME = "CPI"
+talIs(int k, int pk) => CP.includes(k)
+IVRV_NQ = -0.4706
+IVRV_ES = -0.1745
+ownCk(int k) =>
+    switch k
+        0 => 0
+        => 0
+ckName(int k) =>
+    switch k
+        0 => "CPI"
+        1 => "Normal"
+        => ""
+ckN(int k, bool es) =>
+    switch k
+        0 => es ? "98" : "96"
+        1 => es ? "1416" : "1342"
+        => ""
+ownProfile(int tk, int pk, int today) =>
+    bool now = CP.includes(tk)
+    int  rf  = na(tk) ? today : math.max(tk, today)
+    [0, now, now ? tk : nextOf(CP, rf)]
+ownNext(int today) =>
+    int n1 = nextOf(CP, today)
+    ["CPI 08:30", n1, "then", na(n1) ? na : nextOf(CP, addDays(n1, 1))]
+
+// ADR20, built on 15-minute bars so it needs little chart history: mean (high − low) ÷ open of the last 20 complete
+// days (at least 15). One for the chosen day, one for the trading day (the clock).
+adrCalc(int an) =>
+    var array<float> rs = array.new<float>()
+    var float o = na
+    var float h = na
+    var float l = na
+    var int   n = 0
+    int  m  = hour(time, TZ) * 60 + minute(time, TZ)
+    int  dk = anchorKey(an, time)
+    bool iw = inWin(an, m)
+    bool st = iw and (not iw[1] or dk != dk[1])
+    if st
+        if n >= 0.94 * winBars(an) and o > 0
+            rs.push((h - l) / o)
+            if rs.size() > 20
+                rs.shift()
+        o := open
+        h := high
+        l := low
+        n := 1
+    else if iw and not na(o)
+        h := math.max(h, high)
+        l := math.min(l, low)
+        n += 1
+    rs.size() >= 15 ? rs.avg() : na
+[ADR, ADRtd] = request.security(syminfo.tickerid, "15", [adrCalc(AN), adrCalc(0)])
+// ADR20 of the trading day from daily bars (as Kyōka): a 1-minute chart or Bar Replay often loads fewer than the 15 days of
+// 15-minute bars the line above needs; the daily bars (the CME 18:00–17:00 trading day) always have them.
+// The 15-minute figure stays as the fallback and for the NY-midnight and RTH anchors.
+float adrD = request.security(ticker.modify(syminfo.tickerid, backadjustment = backadjustment.off), "D", ta.sma((high - low) / open, 20)[1], lookahead = barmerge.lookahead_on)
+ADRtd := na(adrD) ? ADRtd : adrD
+ADR := AN == 0 and not na(adrD) ? adrD : ADR
+// Higher-timeframe requests. None of them leaks future data:
+// · dx4 uses the [1] offset with lookahead_on (the standard non-repainting pattern): last completed week vs 4 weeks before.
+// · the weekly OHLC and the monthly high / low are read only on the last bar (the weekly PO3 candle and the WEEK / MONTH
+//   rows), where nothing lies ahead: lookahead_on returns the developing week / month there and is never used on history.
+// · the daily VIX, DXY ATR and 10Y values go through done(): today's daily value is used only once its session has closed
+//   (time_close ≤ the chart bar's time), otherwise the prior day's.
+float dx4 = request.security(dxySym, "W", close[1] / close[5] - 1, lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+[wO, wH, wL, wC] = request.security(syminfo.tickerid, "W", [open, high, low, close], lookahead = barmerge.lookahead_on)
+float dxL = request.security(dxySym, timeframe.isintraday ? timeframe.period : "D", close, ignore_invalid_symbol = true)
+// completed daily values: a daily bar counts once its session has closed, so evening bars already see that day's close
+done(float v0, float v1, int tc) => not na(tc) and tc <= time ? v0 : v1
+[vTC, vC0, vC1, vS0, vS1] = request.security(vixSym, "D", [time_close, close, close[1], ta.sma(close, 20), ta.sma(close, 20)[1]], lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+float vixL = request.security(vixSym, timeframe.isintraday ? timeframe.period : "D", close, ignore_invalid_symbol = true)
+[dTC, dA0, dA1] = request.security(dxySym, "D", [time_close, ta.atr(20), ta.atr(20)[1]], lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+[yTC, yC0, yC1] = request.security(ylSym, "D", [time_close, close, close[1]], lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+float ylL = request.security(ylSym, timeframe.isintraday ? timeframe.period : "D", close, ignore_invalid_symbol = true)
+[moH, moL] = request.security(syminfo.tickerid, "M", [high, low], lookahead = barmerge.lookahead_on)
+// NQ · ES · RTY (or MNQ · MES · M2K) with their week open, for the readout under the release: the chart's own contract
+// month (NQ1! → ES1! · RTY1!, NQZ2026 → ESZ2026 · RTYZ2026); other symbols read the continuous minis
+bool   famOk = syminfo.root == "NQ" or syminfo.root == "ES" or syminfo.root == "RTY" or syminfo.root == "MNQ" or syminfo.root == "MES" or syminfo.root == "M2K"
+bool   famMc = syminfo.root == "MNQ" or syminfo.root == "MES" or syminfo.root == "M2K"
+string famSx = famOk ? str.replace(syminfo.ticker, syminfo.root, "") : "1!"
+string famPx = famOk ? syminfo.prefix : "CME_MINI"
+idxNm(int i) => famMc ? (i == 0 ? "MNQ" : i == 1 ? "MES" : "M2K") : (i == 0 ? "NQ" : i == 1 ? "ES" : "RTY")
+idxTk(int i) => famPx + ":" + idxNm(i) + famSx
+wkOpenF() =>
+    var float wo = na
+    bool nw = ta.change(time("W")) != 0
+    if nw or na(wo)
+        wo := open
+    [open, wo]
+[nqO, nqW] = request.security(idxTk(0), timeframe.period, wkOpenF(), ignore_invalid_symbol = true)
+[esO, esW] = request.security(idxTk(1), timeframe.period, wkOpenF(), ignore_invalid_symbol = true)
+[ryO, ryW] = request.security(idxTk(2), timeframe.period, wkOpenF(), ignore_invalid_symbol = true)
+float vPrev = done(vC0, vC1, vTC)                             // VIX prior close
+float vAvg  = done(vS0, vS1, vTC)                             // its 20-day average
+float dxAtr = done(dA0, dA1, dTC)                             // DXY ATR20 of completed days
+float ylPrev = done(yC0, yC1, yTC)
+
+// ═══════════════════════════════════════════════════════════════ Today, live
+int  tfM  = math.max(1, int(timeframe.in_seconds() / 60))
+int  mod  = hour(time, TZ) * 60 + minute(time, TZ)
+int  calK = dateKey(time)
+int  key  = anchorKey(AN, time)
+bool iwin = inWin(AN, mod)
+bool dSt  = iwin and (not iwin[1] or key != key[1])
+var float dO = na
+var float dH = na
+var float dL = na
+var float dC = na
+var int   dX = na                                         // bar_index of the day's first bar (lines start here)
+// drawings placed by bar_index are anchored through `time`, so lines that start at the day's first bar need its
+// history: a 1-minute trading day is ~1,380 bars, far past the buffer Pine sizes on its own
+max_bars_back(time, 5000)
+var int   dK = na
+var int   pK = na
+var int   dT = 6
+if dSt
+    pK := dK
+    dK := key
+    dO := open
+    dH := high
+    dL := low
+    dX := bar_index
+    dT := dayType(key, pK)
+else if iwin and not na(dO)
+    dH := math.max(dH, high)
+    dL := math.min(dL, low)
+if iwin and not na(dO)
+    dC := close
+
+// trading-day (18:00) and RTH trackers for the model levels and the clock
+int  tdK   = anchorKey(0, time)
+bool tdSt  = tdK != tdK[1]
+var float tdO  = na
+var float tdH  = na
+var float tdL  = na
+var float ptdH = na
+var float ptdL = na
+var int   tdX  = na
+var int   tdPK = na
+if tdSt
+    tdPK := tdK[1]
+    ptdH := tdH
+    ptdL := tdL
+    tdO  := open
+    tdH  := high
+    tdL  := low
+    tdX  := bar_index
+else
+    tdH := math.max(nz(tdH, high), high)
+    tdL := math.min(nz(tdL, low), low)
+bool rthSt = mod >= 570 and mod < 975 and (mod[1] < 570 or mod[1] >= 975 or calK != calK[1])
+var float rthC  = na
+var float rH    = na
+var float rL    = na
+var float gapPC = na
+var float gapCE = na
+var float rthO  = na
+var float tgGap = na
+var float tgPct = na
+var int   tgKey = na
+if rthSt
+    rthO  := open
+    tgKey := calK
+    tgGap := na(rthC) ? na : open - rthC
+    tgPct := na(rthC) or rthC == 0 ? na : (open / rthC - 1) * 100
+    gapPC := rthC
+    gapCE := na(rthC) ? na : (rthC + open) / 2
+    rH    := high
+    rL    := low
+else if mod >= 570 and mod < 975
+    rH := math.max(rH, high)
+    rL := math.min(rL, low)
+if mod >= 570 and mod < 975
+    rthC := close
+bool recent = time > timenow - markD * 86400000
+// event-day records the chart itself finds; where they exist they take precedence over the built-in ones, and they
+// keep the tally current after the built-in history ends
+var array<int>   LTd = array.new<int>()
+var array<int>   LTt = array.new<int>()
+var array<int>   LTr = array.new<int>()
+var array<float> LTg = array.new<float>()
+var array<float> LTp = array.new<float>()
+var int   prvTdO_k = na
+var float prvTdO   = na
+var int   prvTdPK  = na
+int  talEnd = isES ? TAL_END_ES : isNQ ? TAL_END_NQ : 0
+if tdSt and not na(prvTdO) and prvTdO_k == tdK[1] and talIs(tdK[1], prvTdPK)
+    bool rOk = tgKey == tdK[1] and not na(rthO)
+    LTd.push(tdK[1])
+    LTt.push(int(math.sign(close[1] - prvTdO)))
+    LTr.push(rOk ? int(math.sign(rthC - rthO)) : 0)
+    LTg.push(rOk ? tgGap : na)
+    LTp.push(rOk ? tgPct : na)
+if tdSt
+    prvTdO   := open
+    prvTdO_k := tdK
+    prvTdPK  := tdPK
+var float dxTdO = na
+if tdSt
+    dxTdO := dxL[1]
+float dxDay = na(dxTdO) or dxTdO == 0 ? na : dxL / dxTdO - 1
+var float dxHi = na
+var float dxLo = na
+if tdSt or na(dxHi)
+    dxHi := dxL
+    dxLo := dxL
+else if not na(dxL)
+    dxHi := math.max(dxHi, dxL)
+    dxLo := math.min(dxLo, dxL)
+varip int beat = 0
+if barstate.isrealtime
+    beat += 1
+
+
+// Level lines and their end labels that run to a time later today (16:14, 17:00, the NFP release) are cut at the latest
+// bar and grow with it, so they never run through the candles on the right.
+var array<line>  GL  = array.new<line>()
+var array<int>   GLE = array.new<int>()
+var array<label> GT  = array.new<label>()
+var array<int>   GTE = array.new<int>()
+trimL(line l, int e) =>
+    if e > time
+        l.set_x2(time)
+        GL.push(l)
+        GLE.push(e)
+    l
+trimT(label t, int e) =>
+    if e > time
+        t.set_x(time)
+        GT.push(t)
+        GTE.push(e)
+    t
+
+// ═══════════════════════════════════════════════════════════════ Model structure on the price chart
+bool gCPI = CP.includes(calK)
+bool gAft = CP.includes(tdPK) and not gCPI                   // the trading day after a CPI day
+bool gOn  = showStr and recent
+bool wkd  = dayofweek(time, TZ) >= 2 and dayofweek(time, TZ) <= 6
+var float drH  = na
+var float drL  = na
+var int   drK  = na
+var int   swp  = 0
+var line  p0H  = na
+var line  p0L  = na
+var label p0Ht = na
+var label p0Lt = na
+int    drEndM = drEnd == "11:00" ? 660 : drEnd == "16:14" ? 974 : 1020
+string swTip  = "First side of the pre-CPI range (07:30–08:29) taken after the release. The day's bigger move (from 08:30) went the same way " + (isES ? "67% of the time vs 56% on normal days, but only 53% in 2025–26 (71% in 2018–24)." : "70% of the time vs 56% on normal days, and 71% in 2025–26.")
+// stage 1: the pre-CPI range, live from 07:30, plus yesterday's RTH close
+if gOn and gCPI
+    if mod >= 450 and mod < 510
+        if nz(drK) != calK
+            drK := calK
+            drH := high
+            drL := low
+            swp := 0
+            if showDR0
+                p0H  := line.new(time, high, time, high, xloc = xloc.bar_time, color = cDR0, style = lsOf(stDR0), force_overlay = true)
+                p0L  := line.new(time, low, time, low, xloc = xloc.bar_time, color = cDR0, style = lsOf(stDR0), force_overlay = true)
+                p0Ht := label.new(time, high, "pre-CPI high", xloc = xloc.bar_time, color = #00000000, textcolor = cDR0, style = label.style_label_lower_left, size = lbSz, tooltip = swTip, force_overlay = true)
+                p0Lt := label.new(time, low, "pre-CPI low", xloc = xloc.bar_time, color = #00000000, textcolor = cDR0, style = label.style_label_upper_left, size = lbSz, tooltip = swTip, force_overlay = true)
+            if showYC and not na(rthC)
+                trimL(line.new(keyAt(calK, 450), rthC, keyAt(calK, 974), rthC, xloc = xloc.bar_time, color = color.new(cLvl, 25), style = line.style_dotted, width = 1, force_overlay = true), keyAt(calK, 974))
+                trimT(label.new(keyAt(calK, 974), rthC, "yday RTH close", xloc = xloc.bar_time, color = #00000000, textcolor = color.new(cLvl, 15), style = label.style_label_left, size = lbSz, tooltip = "Yesterday's RTH close (16:14 bar): the gap the release opens is measured from here.", force_overlay = true), keyAt(calK, 974))
+        else
+            drH := math.max(drH, high)
+            drL := math.min(drL, low)
+            if showDR0 and not na(p0H)
+                p0H.set_y1(drH)
+                p0H.set_y2(drH)
+                p0L.set_y1(drL)
+                p0L.set_y2(drL)
+                p0Ht.set_y(drH)
+                p0Lt.set_y(drL)
+    // the range runs right until the release first takes one of its sides
+    if showDR0 and drK == calK and not na(p0H) and swp == 0 and mod >= 450 and mod < drEndM
+        p0H.set_x2(time)
+        p0L.set_x2(time)
+    if drK == calK and mod >= 510 and mod < 975 and swp == 0 and not na(drH)
+        if low < drL
+            swp := -1
+            label.new(bar_index, drL, "1st sweep ▼", color = #00000000, textcolor = cDR0, style = label.style_label_upper_right, size = lbSz, tooltip = swTip, force_overlay = true)
+        else if high > drH
+            swp := 1
+            label.new(bar_index, drH, "1st sweep ▲", color = #00000000, textcolor = cDR0, style = label.style_label_lower_right, size = lbSz, tooltip = swTip, force_overlay = true)
+    if mod <= 530 and mod + tfM > 530
+        line.new(keyAt(calK, 530), close, keyAt(calK, 530), close + syminfo.mintick, xloc = xloc.bar_time, extend = extend.both, color = color.new(cLvl, 60), style = line.style_dotted, force_overlay = true)
+    if rthSt and not na(gapCE)
+        trimL(line.new(time, gapCE, keyAt(calK, 974), gapCE, xloc = xloc.bar_time, color = color.new(cLvl, 20), style = line.style_dotted, force_overlay = true), keyAt(calK, 974))
+        trimT(label.new(keyAt(calK, 974), gapCE, "gap 50%", xloc = xloc.bar_time, color = #00000000, textcolor = cLvl, style = label.style_label_left, size = size.tiny, tooltip = "RTH gap 50% = (yesterday's RTH close + 09:30 open) ÷ 2", force_overlay = true), keyAt(calK, 974))
+// the 08:30–09:00 window: full-height lines at 08:30 and 09:00 and the band between them, strongest on CPI days
+bool  inW     = mod < 540 and mod + tfM > 510
+bool  winShow = gOn and wkd and timeframe.isintraday and (winDays == "Every weekday" or gCPI or (gAft and winDays == "CPI days and the day after"))
+color winC    = gCPI ? cWinL : gAft ? color.new(cWinL, 45) : color.new(cWinL, 70)
+if winShow and winLn
+    for m in array.from(510, 540)
+        if mod <= m and mod + tfM > m
+            line.new(keyAt(calK, m), close, keyAt(calK, m), close + syminfo.mintick, xloc = xloc.bar_time, extend = extend.both, color = winC, width = winLW, force_overlay = true)
+bgcolor(winShow and winBg and inW ? color.new(cWinL, gCPI ? 82 : gAft ? 90 : 95) : na, title = "08:30–09:00 window", force_overlay = true)
+// the 08:30–09:00 CPI dealing range: high, low and CE, live through the window, then carried right to the range end
+var float    c3H  = na
+var float    c3L  = na
+var int      c3K  = na
+var line     c3Hl = na
+var line     c3Ll = na
+var line     c3Cl = na
+var linefill c3Fl = na
+var label    c3Ht = na
+var label    c3Lt = na
+string c3Tip = "CPI dealing range: the 08:30–09:00 high and low. NQ + ES + RTY 1-minute, 102 CPI days 2018–26 (304 symbol-days) vs normal days: the window ran a median 0.37 ADR20 (80%: 0.77) vs 0.12. After 09:00, RTH took its high by 16:14 on 74% of CPI days (normal 89%), its low 70% (87%), both 48% (77%), all held. The RTH close: above it 37% · inside 28% · below 35% (normal 48 · 10 · 42). Its direction did not carry: RTH closed the 08:30–09:00 way 48%."
+string x25Tip = "±0.25: a quarter of the 08:30–09:00 range beyond its high and low. How often RTH (09:00–16:14) reached them on CPI days, NQ + ES + RTY 1-minute, 103 days 2018–26 (307 symbol-days): +0.25 above the high 62% (normal days 83%) · −0.25 below the low 60% (83%) · either 90% (100%) · both 32% (67%). Once the high broke, it carried on to +0.25 83% (94%); once the low broke, to −0.25 85% (95%). All held in 2018–24 and 2025–26 and on NQ, ES and RTY, but 2025–26 ran lower: +0.25 45%, −0.25 53%. CPI ranges are wide, so their extensions are reached less often than a normal day's."
+if gOn and gCPI and showDR and tfM <= 30 and mod >= 510 and mod < 540
+    float ce_ = na
+    if nz(c3K) != calK
+        c3K  := calK
+        c3H  := high
+        c3L  := low
+        ce_  := (c3H + c3L) / 2
+        c3Hl := line.new(time, c3H, time, c3H, xloc = xloc.bar_time, color = cDR, style = lsOf(stDR), width = wDR, force_overlay = true)
+        c3Ll := line.new(time, c3L, time, c3L, xloc = xloc.bar_time, color = cDR, style = lsOf(stDR), width = wDR, force_overlay = true)
+        c3Cl := drEq ? line.new(time, ce_, time, ce_, xloc = xloc.bar_time, color = color.new(cDR, 25), style = line.style_dotted, force_overlay = true) : na
+        c3Fl := drFill ? linefill.new(c3Hl, c3Ll, color.new(cDR, 92)) : na
+        c3Ht := label.new(time, c3H, "CPI DR high", xloc = xloc.bar_time, color = #00000000, textcolor = cDR, style = label.style_label_lower_left, size = lbSz, tooltip = c3Tip, force_overlay = true)
+        c3Lt := label.new(time, c3L, "CPI DR low", xloc = xloc.bar_time, color = #00000000, textcolor = cDR, style = label.style_label_upper_left, size = lbSz, tooltip = c3Tip, force_overlay = true)
+    else
+        c3H := math.max(c3H, high)
+        c3L := math.min(c3L, low)
+        ce_ := (c3H + c3L) / 2
+        c3Hl.set_y1(c3H)
+        c3Hl.set_y2(c3H)
+        c3Ll.set_y1(c3L)
+        c3Ll.set_y2(c3L)
+        c3Ht.set_y(c3H)
+        c3Lt.set_y(c3L)
+        if not na(c3Cl)
+            c3Cl.set_y1(ce_)
+            c3Cl.set_y2(ce_)
+    c3Hl.set_x2(time)
+    c3Ll.set_x2(time)
+    if not na(c3Cl)
+        c3Cl.set_x2(time)
+// at 09:00 the range is fixed and runs right; the CE's label gives how often CPI days traded back to it from here
+if c3K == calK and mod >= 540 and (mod[1] < 540 or calK != calK[1]) and not na(c3Hl)
+    int   te  = keyAt(calK, drEndM)
+    float ce_ = (c3H + c3L) / 2
+    float cd  = tdO * ADRtd > 0 ? math.abs(close[1] - ce_) / (tdO * ADRtd) : na
+    string od = na(cd) ? "" : cd <= 0.1 ? " · 94%" : cd <= 0.2 ? " · 85%" : cd <= 0.4 ? " · 71%" : " · 39%"
+    trimL(c3Hl, te)
+    trimL(c3Ll, te)
+    if not na(c3Cl)
+        trimL(c3Cl, te)
+        trimT(label.new(te, ce_, "CPI CE" + od, xloc = xloc.bar_time, color = #00000000, textcolor = cDR, style = label.style_label_left, size = lbSz, tooltip = "CE = the 08:30–09:00 range's 50%. How often RTH traded back to it after 09:00 (by 16:14) on CPI days, by its distance from the 08:59 close: within 0.1 ADR20 94% · 0.1–0.2 85% · 0.2–0.4 71% · beyond 0.4 39% (2018–24 / 2025–26: 94 / 95 · 87 / 70 · 74 / 56). Normal days within 0.2 ADR: 94% · 85%. Read it as distance: a near CE gets traded, a far one less often. Today: " + (na(cd) ? "—" : str.tostring(cd, "0.00") + " ADR20") + ".", force_overlay = true), te)
+    // ±0.25 of the range beyond its high and low, from 08:30 to the range end
+    if drExt
+        float r25 = (c3H - c3L) * 0.25
+        int   t0_ = keyAt(calK, 510)
+        trimL(line.new(t0_, c3H + r25, te, c3H + r25, xloc = xloc.bar_time, color = color.new(cDR, 35), style = line.style_dashed, force_overlay = true), te)
+        trimL(line.new(t0_, c3L - r25, te, c3L - r25, xloc = xloc.bar_time, color = color.new(cDR, 35), style = line.style_dashed, force_overlay = true), te)
+        trimT(label.new(te, c3H + r25, "CPI DR +0.25 · 62%", xloc = xloc.bar_time, color = #00000000, textcolor = color.new(cDR, 15), style = label.style_label_left, size = lbSz, tooltip = x25Tip, force_overlay = true), te)
+        trimT(label.new(te, c3L - r25, "CPI DR −0.25 · 60%", xloc = xloc.bar_time, color = #00000000, textcolor = color.new(cDR, 15), style = label.style_label_left, size = lbSz, tooltip = x25Tip, force_overlay = true), te)
+// the window's high / low box: CPI days, lighter on the day after
+var box   wBx = na
+var int   wK  = na
+if gOn and showWin and (gCPI or gAft) and inW and wkd
+    if nz(wK) != calK
+        wK  := calK
+        wBx := box.new(keyAt(calK, 510), high, keyAt(calK, 540), low, xloc = xloc.bar_time, border_color = color.new(cGh, gCPI ? 35 : 70), border_width = 1, bgcolor = color.new(cGh, gCPI ? 78 : 92), force_overlay = true)
+    else
+        wBx.set_top(math.max(wBx.get_top(), high))
+        wBx.set_bottom(math.min(wBx.get_bottom(), low))
+// the CPI flag: above the release bar, tied by a stem to the 08:30 open; it rises with the release push to 09:00. The day
+// after and other days get a quiet tag (its wording box empty = none)
+var label  wTx  = na
+var line   wTs  = na
+var int    wTxK = na
+color  cPilM  = dark ? #2a2e39 : #e3e6ec
+string noteTx = gCPI ? txCPI : gAft ? txAft : txOth
+float  noteOf = (tdO * ADRtd > 0 ? tdO * ADRtd : tdH - tdL) * noteUp / 100.0
+noteSz = noteSzI == "Tiny" ? size.tiny : noteSzI == "Small" ? size.small : noteSzI == "Normal" ? size.normal : noteSzI == "Large" ? size.large : size.huge
+if gOn and showNot and wkd and (gCPI or noteTx != "") and mod <= 510 and mod + tfM > 510
+    int    nx   = nextOf(CP, addDays(calK, 1))
+    string nTip = gCPI ? "CPI day: the release is at 08:30 ET. The 08:30–09:00 half hour adds a median " + (isES ? "+0.19× ADR20 to the day range vs +0.03×" : "+0.19× ADR20 to the day range vs +0.02×") + " on normal days." : gAft ? "The trading day after a CPI day. Tested 2018–26: it went the same way as the CPI day " + (isES ? "46% ±10 of the time (any day → next day 49%)" : "44% ±10 of the time (any day → next day 48%)") + ", so no continuation edge showed up." : "Not a CPI day: a normal day's 08:30 one-minute candle is about 1/9 the size of a CPI one (medians)." + (na(nx) ? "" : " Next CPI: " + fmtDay(nx) + ".")
+    float  yT   = high + noteOf
+    wTxK := calK
+    wTs  := gCPI ? line.new(time, open, time, yT, xloc = xloc.bar_time, color = color.new(cNote, 25), style = line.style_dotted, force_overlay = true) : na
+    wTx  := label.new(time, yT, gCPI ? "CPI 08:30 · " + pf(open) + (noteTx == "" ? "" : "\n" + noteTx) : (gAft ? "CPI +1 · " : "") + noteTx, xloc = xloc.bar_time, color = gCPI ? cNote : cPilM, textcolor = gCPI ? #ffffff : cSub, style = label.style_label_down, size = gCPI ? noteSz : size.tiny, tooltip = nTip, force_overlay = true)
+else if wTxK == calK and mod < 540 and not na(wTx) and high + noteOf > wTx.get_y()
+    wTx.set_y(high + noteOf)
+    if not na(wTs)
+        wTs.set_y2(high + noteOf)
+// NQ · ES · RTY against their week open at 08:30 and at the 09:30 open: one readout under the release, held below the
+// candles to 10:00
+var label  gjL  = na
+var int    gjK  = na
+var string gj8  = ""
+var float  gjY  = na
+wkPct(float px, float wo) => na(px) or na(wo) or wo == 0 ? na : (px / wo - 1) * 100
+wkCell(float p) => na(p) ? "   —    " : (p >= 0 ? "▲" : "▼") + str.tostring(math.abs(p), "0.00") + "%"
+padR(string s, int n) => s + str.repeat(" ", math.max(0, n - str.length(s)))
+gjRow(string tm) =>
+    float a = wkPct(nqO, nqW)
+    float b = wkPct(esO, esW)
+    float c = wkPct(ryO, ryW)
+    bool  ok = not (na(a) or na(b) or na(c))
+    int   up = (nz(a) > 0 ? 1 : 0) + (nz(b) > 0 ? 1 : 0) + (nz(c) > 0 ? 1 : 0)
+    float lo = math.min(nz(a, 1e9), nz(b, 1e9), nz(c, 1e9))
+    string wk = not ok ? "" : lo == a ? idxNm(0) : lo == b ? idxNm(1) : idxNm(2)
+    string tg = not ok ? "" : up == 3 ? "all ▲" : up == 0 ? "all ▼" : "SPLIT"
+    padR(tm, 7) + padR(wkCell(a), 8) + " " + padR(wkCell(b), 8) + " " + padR(wkCell(c), 8) + " " + padR(tg, 5) + (wk == "" ? "" : " weak " + wk)
+gjHead() => "vs week open\n" + padR("", 7) + padR(idxNm(0), 8) + " " + padR(idxNm(1), 8) + " " + padR(idxNm(2), 8)
+string gjTip = "Each index against its own week open (Sunday 18:00), in %, at the 08:30 release and the 09:30 open. SPLIT = they sit on different sides of their week opens, the SMT idea behind Genjutsu Kai; weak = the furthest below. NQ + ES + RTY 1-minute 2018–26: the index weakest at 08:30 was still the weakest at 16:14 on 71% of CPI days (the strongest still the strongest 78%), much as on any day (70%, 71%): relative strength carries through the day, CPI does not reset it. A split at 08:30 (29% of CPI days, 26% of others) usually stood: the odd one joined the others by 16:14 on 24% of CPI days (32% of others). A locator, not a direction call."
+float gjOff = (tdO * ADRtd > 0 ? tdO * ADRtd : tdH - tdL) * 0.12
+if gOn and gCPI and showWkO and mod <= 510 and mod + tfM > 510
+    gjK := calK
+    gj8 := gjRow("08:30")
+    gjY := low - gjOff
+    gjL := label.new(time, gjY, gjHead() + "\n" + gj8, xloc = xloc.bar_time, color = color.new(dark ? #161a23 : #f4f6f9, 0), textcolor = cTx, style = label.style_label_up, size = lbSz == size.tiny ? size.small : lbSz, text_font_family = font.family_monospace, textalign = text.align_left, tooltip = gjTip, force_overlay = true)
+else if gjK == calK and not na(gjL) and mod < 600
+    if mod <= 570 and mod + tfM > 570
+        gjL.set_text(gjHead() + "\n" + gj8 + "\n" + gjRow("09:30"))
+    if low - gjOff < gjY
+        gjY := low - gjOff
+        gjL.set_y(gjY)
+// every CPI 08:30 candle, kept and extended to the right like NWOG / NDOG
+var array<box>   RCB = array.new<box>()
+var array<label> RCT = array.new<label>()
+var float rcH = na
+var float rcL = na
+var int   rcK = na
+int  rcLen = relLenI == "1 min" ? 1 : relLenI == "5 min" ? 5 : 15
+bool inRC  = tfM <= rcLen ? (mod >= 510 and mod < 510 + rcLen) : (mod <= 510 and mod + tfM > 510)
+if gCPI and inRC
+    if nz(rcK) != calK
+        rcK := calK
+        rcH := high
+        rcL := low
+    else
+        rcH := math.max(rcH, high)
+        rcL := math.min(rcL, low)
+if markEv and gCPI and rcK == calK and not inRC and inRC[1]
+    int   eff = math.max(rcLen, tfM)
+    float q1  = eff <= 1 ? (isES ? 0.161 : 0.146) : eff <= 5 ? (isES ? 0.209 : 0.202) : (isES ? 0.234 : 0.235)
+    float q2  = eff <= 1 ? (isES ? 0.400 : 0.369) : eff <= 5 ? (isES ? 0.470 : 0.432) : (isES ? 0.504 : 0.464)
+    float xr  = tdO * ADRtd > 0 ? (rcH - rcL) / (tdO * ADRtd) : na
+    string cat = na(xr) ? "" : xr >= q2 ? " · wild" : xr < q1 ? " · quiet" : " · average"
+    for b in RCB                                              // older CPI candles fade back, the latest stays strong
+        b.set_bgcolor(color.new(cGh, 93))
+        b.set_border_color(color.new(cGh, 55))
+    for t in RCT
+        t.set_textcolor(color.new(cGh, 35))
+    RCB.push(box.new(keyAt(calK, 510), rcH, time, rcL, xloc = xloc.bar_time, border_color = color.new(cGh, 15), border_width = 1, bgcolor = color.new(cGh, 86), force_overlay = true))
+    RCT.push(label.new(time, rcH, "CPI " + str.format_time(keyTime(calK), "dd/MM", TZ) + cat, xloc = xloc.bar_time, color = #00000000, textcolor = cGh, style = label.style_label_lower_left, size = size.small, tooltip = "CPI 08:30 candle (" + str.tostring(eff) + " min): " + pf(rcH - rcL) + " pts = " + (na(xr) ? "—" : str.tostring(xr, "0.00") + "× ADR20") + ". CPI release candles of this length since 2018: bottom third under " + str.tostring(q1, "0.00") + "× (quiet), top third over " + str.tostring(q2, "0.00") + "× (wild). A normal day's 08:30 candle of the same length is about " + (eff <= 1 ? "1/9" : eff <= 5 ? "1/5" : "1/4") + " the size of a CPI one (medians).", force_overlay = true))
+    if RCB.size() > relKeep
+        RCB.shift().delete()
+        RCT.shift().delete()
+if RCB.size() > 0
+    for b in RCB
+        b.set_right(time)
+    for t in RCT
+        t.set_x(time)
+
+if GL.size() > 0
+    for i = GL.size() - 1 to 0
+        int e = GLE.get(i)
+        GL.get(i).set_x2(math.min(e, time))
+        if time >= e
+            GL.remove(i)
+            GLE.remove(i)
+if GT.size() > 0
+    for i = GT.size() - 1 to 0
+        int e = GTE.get(i)
+        GT.get(i).set_x(math.min(e, time))
+        if time >= e
+            GT.remove(i)
+            GTE.remove(i)
+
+// ═══════════════════════════════════════════════════════════════ Event clock (indicator pane)
+bool clkTF = timeframe.isintraday and timeframe.in_seconds() <= 3600
+bool clkGo = clkOn and clkTF and paneV == "Event clock"
+bool clkR  = clkMet == "Range"
+int  mSel  = clkR ? 0 : 1
+NCK = 2
+REL = "510"
+var int  ckI   = NCK - 1                                     // today's baseline: this event if today is one, else normal
+var bool ckEv  = false
+var int  ckEvI = 0                                           // this indicator's event for today / the next one
+if tdSt or barstate.isfirst
+    [k_, now_, d_] = ownProfile(tdK, tdPK, tdK)
+    ckEv  := now_
+    ckEvI := ownCk(k_)
+    ckI   := now_ ? ownCk(k_) : NCK - 1
+int   elM  = (mod - 1080 + 1440) % 1440
+float eEnd = math.min(1380.0, elM + tfM)
+int   jB   = math.min(45, math.max(0, int(math.ceil(eEnd / 30.0)) - 1))
+float fB   = math.max(0.0, math.min(1.0, (eEnd - 30.0 * jB) / 30.0))
+float scP  = tdO * ADRtd
+float vPts = clkR ? tdH - tdL : close - tdO
+float vAdr = scP > 0 ? vPts / scP : na
+float q25B = ckAt(ckI, mSel, 1, jB, fB)
+float q75B = ckAt(ckI, mSel, 3, jB, fB)
+string stB = na(vAdr) ? "" : vAdr > q75B ? "Above" : vAdr < q25B ? "Below" : "Inside"
+bool  isTd = anchorKey(0, last_bar_time) == tdK
+color liveC = stB == "Above" ? cHot : stB == "Below" ? cCold : cTx
+plot(clkGo and isTd and not tdSt ? vPts : na, "Today", color = liveC, linewidth = 3, style = plot.style_linebr, display = display.all - display.status_line)
+plot(clkGo and kPast and not isTd and not tdSt ? vPts : na, "Earlier days", color = color.new(cSub, 75), linewidth = 1, style = plot.style_linebr, display = display.all - display.status_line)
+// invisible headroom: with the clock card at the top of the pane, the scale leaves room above the bands for it
+bool  ckTop = showCk and ckOn == "Indicator pane" and str.startswith(ckPos, "Top")
+float hdrm  = clkGo and scP > 0 ? math.max(ck(ckI, mSel, 4, 45), ck(NCK - 1, mSel, 4, 45)) * scP * (ckTop ? 1.75 : 1.1) : na
+plot(hdrm, "Headroom", color = #00000000, editable = false, display = display.pane)
+
+var array<polyline> KP = array.new<polyline>()
+var array<line>     KL = array.new<line>()
+var array<label>    KT = array.new<label>()
+kPath(int i, int m, int k, int t0, float sc, color lc, int lw, string ls) =>
+    array<chart.point> pts = array.new<chart.point>()
+    pts.push(chart.point.from_time(t0, 0.0))
+    for j = 0 to 45
+        pts.push(chart.point.from_time(t0 + (j + 1) * 1800000, ck(i, m, k, j) * sc))
+    polyline.new(pts, curved = false, closed = false, xloc = xloc.bar_time, line_color = lc, line_width = lw, line_style = ls)
+kBand(int i, int m, int kUp, int kDn, int t0, float sc, color fc) =>
+    array<chart.point> pts = array.new<chart.point>()
+    pts.push(chart.point.from_time(t0, 0.0))
+    for j = 0 to 45
+        pts.push(chart.point.from_time(t0 + (j + 1) * 1800000, ck(i, m, kUp, j) * sc))
+    for j = 45 to 0
+        pts.push(chart.point.from_time(t0 + (j + 1) * 1800000, ck(i, m, kDn, j) * sc))
+    polyline.new(pts, curved = false, closed = true, xloc = xloc.bar_time, line_color = #00000000, fill_color = fc)
+
+if barstate.islast
+    for p in KP
+        p.delete()
+    for l in KL
+        l.delete()
+    for t in KT
+        t.delete()
+    KP.clear()
+    KL.clear()
+    KT.clear()
+    if clkGo and scP > 0
+        int   t0  = keyAt(addDays(tdK, -1), 1080)
+        int   tE  = t0 + 46 * 1800000
+        color ce  = ckEv ? cGh : cSub
+        int   iR  = ckEv ? NCK - 1 : ckEvI
+        color cR  = ckEv ? cMu : color.new(cGh, 25)
+        if kBands
+            KP.push(kBand(ckI, mSel, 4, 0, t0, scP, color.new(ce, 90)))
+            KP.push(kBand(ckI, mSel, 3, 1, t0, scP, color.new(ce, 80)))
+        KP.push(kPath(ckI, mSel, 2, t0, scP, ce, 2, line.style_solid))
+        KT.push(label.new(tE, ck(ckI, mSel, 2, 45) * scP, ckName(ckI) + " median " + pf(ck(ckI, mSel, 2, 45) * scP), xloc = xloc.bar_time, color = #00000000, textcolor = ce, style = label.style_label_left, size = size.tiny))
+        if kRef
+            KP.push(kPath(iR, mSel, 2, t0, scP, cR, 1, line.style_dashed))
+            KT.push(label.new(tE, ck(iR, mSel, 2, 45) * scP, ckName(iR) + (ckEv ? "" : " (next)") + " " + pf(ck(iR, mSel, 2, 45) * scP), xloc = xloc.bar_time, color = #00000000, textcolor = cR, style = label.style_label_left, size = size.tiny))
+        for s in str.split(REL, ",")
+            float rm = str.tonumber(s)
+            if not na(rm)
+                int tr = keyAt(tdK, int(rm))
+                KL.push(line.new(tr, 0.0, tr, scP, xloc = xloc.bar_time, extend = extend.both, color = color.new(cGh, ckEv ? 30 : 70), style = line.style_dotted))
+
+// ═══════════════════════════════════════════════════════════════ PO3 candles (price chart, drawn on the last bar)
+var array<box>   RB = array.new<box>()
+var array<line>  RL = array.new<line>()
+var array<label> RT = array.new<label>()
+clearRight() =>
+    for b in RB
+        b.delete()
+    for l in RL
+        l.delete()
+    for t in RT
+        t.delete()
+    RB.clear()
+    RL.clear()
+    RT.clear()
+pxR(int x, float y, string tx, color c) =>
+    RT.push(label.new(x, y, tx, color = #00000000, textcolor = c, style = label.style_label_left, size = pxSz, force_overlay = true))
+pxL(int x, float y, string tx, color c) =>
+    RT.push(label.new(x, y, tx, color = #00000000, textcolor = c, style = label.style_label_right, size = pxSz, force_overlay = true))
+drawCandle(int x, int w, float o, float h, float l, float c) =>
+    if not na(o) and not na(h) and not na(l) and not na(c)
+        int xm = x + int(w / 2)
+        RL.push(line.new(xm, h, xm, l, color = cWk, width = 1, force_overlay = true))
+        RB.push(box.new(x, math.max(o, c), x + w, math.min(o, c), border_color = cWk, border_width = 1, bgcolor = c >= o ? cUp : cDn, force_overlay = true))
+chip(int x, float y, string tx, string tip, bool above) =>
+    RT.push(label.new(x, y, tx, color = cBg, textcolor = cTx, style = above ? label.style_label_down : label.style_label_up, size = chSz, tooltip = tip, text_font_family = font.family_monospace, textalign = text.align_left, force_overlay = true))
+
+// ═══════════════════════════════════════════════════════════════ Cards
+// Price chart: one stacked table in a corner holding the event card, the VIX card and the DXY card. Each card is an
+// accent stripe, a header bar with a status pill and a tinted body; a thin gap separates them. The clock card
+// (indicator pane by default) uses the same style. Five columns: stripe · key or ✓ · wording · value · comparison.
+SC = 5
+cBody  = dark ? #161a23 : #f4f6f9
+cBody2 = dark ? #1c2130 : #e9edf3
+cNeu   = dark ? #3a3f4b : #d1d4dc
+cVx    = #7e57c2
+cDxc   = #00897b
+cPrem  = dark ? #ef5350 : #d32f2f
+cDisc  = dark ? #66bb6a : #2e7d32
+EV_N = 2 + (evMode == "Checklist" ? chkMax(isES) : 5) + 1        // header · sub-header · rows · NEXT
+VX_N = 4
+DX_N = 7
+FD_N = 8                                                        // Fed card: header · sub · 2 odds · 3 path · move
+KR   = 5
+// Mobile: one narrow table with the same five columns (stripe · key · text · value · side): header, NOW, the held
+// rows or the tally in short form, then one row each for VIX and DXY after a thin gap.
+bool mob   = layI == "Mobile"
+MB_N = 2 + (evMode == "Checklist" ? chkMax(isES) : 4)              // header · NOW · rows
+var table TS  = na
+var table TK  = na
+var table TM  = na
+var int   rEv = -1
+var int   rVx = -1
+var int   rDx = -1
+var int   tkO = 0
+var int   mEv = -1
+var int   mVx = -1
+var int   mDx = -1
+var int   rFd = -1
+var int   mFd = -1
+gapOf(string on, string p) => p == "Top left" or p == "Top center" or (p == "Top right" and on == "Indicator pane")
+if barstate.isfirst
+    int o = gapOf("Price chart", crdPos) ? 1 : 0
+    int r = o
+    if mob
+        if showEv
+            mEv := r
+            r += MB_N
+        int g = r
+        if (showVx or showDx or showFd) and r > o
+            r += 1
+        if showVx
+            mVx := r
+            r += 1
+        if showDx
+            mDx := r
+            r += 1
+        if showFd
+            mFd := r
+            r += 1
+        if r > o
+            TM := table.new(posOf(crdPos), SC, r, bgcolor = #00000000, frame_width = 0, border_width = 0, force_overlay = true)
+            if o == 1
+                TM.cell(0, 0, "", height = 3.5, bgcolor = #00000000)
+                TM.merge_cells(0, 0, SC - 1, 0)
+            if mEv >= 0
+                TM.merge_cells(1, mEv, 3, mEv)
+            if g < r and g > o and (mVx > g or mDx > g or mFd > g)
+                TM.cell(0, g, "", height = 0.6, bgcolor = #00000000)
+                TM.merge_cells(0, g, SC - 1, g)
+    else
+        if showEv
+            rEv := r
+            r += EV_N
+        if showVx
+            r += r > o ? 1 : 0
+            rVx := r
+            r += VX_N
+        if showDx
+            r += r > o ? 1 : 0
+            rDx := r
+            r += DX_N
+        if showFd
+            r += r > o ? 1 : 0
+            rFd := r
+            r += FD_N
+        if r > o
+            TS := table.new(posOf(crdPos), SC, r, bgcolor = #00000000, frame_width = 0, border_width = 0, force_overlay = true)
+            if o == 1
+                TS.cell(0, 0, "", height = 3.5, bgcolor = #00000000)
+                TS.merge_cells(0, 0, SC - 1, 0)
+            for st in array.from(rEv, rVx, rDx, rFd)
+                if st >= 0
+                    TS.merge_cells(1, st, 3, st)
+                    if st > o
+                        TS.cell(0, st - 1, "", height = 0.6, bgcolor = #00000000)
+                        TS.merge_cells(0, st - 1, SC - 1, st - 1)
+            if rEv >= 0
+                TS.merge_cells(2, rEv + EV_N - 1, SC - 1, rEv + EV_N - 1)
+        if showCk and paneV == "Event clock"
+            tkO := gapOf(ckOn, ckPos) ? 1 : 0
+            if ckOn == "Price chart"
+                TK := table.new(posOf(ckPos), SC, KR + tkO, bgcolor = #00000000, frame_width = 0, border_width = 0, force_overlay = true)
+            else
+                TK := table.new(posOf(ckPos), SC, KR + tkO, bgcolor = #00000000, frame_width = 0, border_width = 0)
+            if tkO == 1
+                TK.cell(0, 0, "", height = ckOn == "Price chart" ? 3.5 : 7.0, bgcolor = #00000000)
+                TK.merge_cells(0, 0, SC - 1, 0)
+            TK.merge_cells(1, tkO, 3, tkO)
+// card cells
+tc(table t, int c, int r, string s, color fg, color bg, string tip = "", string ha = text.align_left, bool b = false) =>
+    t.cell(c, r, s, text_color = fg, bgcolor = bg, text_size = crdSz, text_halign = ha, tooltip = tip, text_font_family = font.family_monospace, text_formatting = b ? text.format_bold : text.format_none)
+stripe(table t, int r, color col) =>
+    t.cell(0, r, "", bgcolor = col, width = 0.25)
+cardHead(table t, int r, color col, string title, string tip, string pill, color pfg, color pbg) =>
+    stripe(t, r, col)
+    tc(t, 1, r, title, #ffffff, col, tip, text.align_left, true)
+    tc(t, 4, r, pill, pfg, pbg, "", text.align_center, true)
+cardSub(table t, int r, color col, string txt, string a1, string a2) =>
+    stripe(t, r, col)
+    tc(t, 1, r, "", cMu, cBody2)
+    tc(t, 2, r, txt, cMu, cBody2)
+    tc(t, 3, r, a1, cMu, cBody2, "", text.align_center)
+    tc(t, 4, r, a2, cMu, cBody2, "", text.align_center)
+// key is a ✓ pill when held, else a muted label; value in bold
+cardRow(table t, int r, color col, string key, bool held, string lab, string v, string b, string tip, color vfg = na, color bfg = na) =>
+    stripe(t, r, col)
+    tc(t, 1, r, key, held ? #ffffff : cMu, held ? cOk : cBody, tip, text.align_center, held)
+    tc(t, 2, r, lab, cTx, cBody, tip)
+    tc(t, 3, r, v, na(vfg) ? cTx : vfg, cBody, tip, text.align_center, true)
+    tc(t, 4, r, b, na(bfg) ? cMu : bfg, cBody, tip, text.align_center)
+cardWide(table t, int r, color col, string key, string txt, string tip, color fg) =>
+    stripe(t, r, col)
+    tc(t, 1, r, key, cMu, cBody, "", text.align_center)
+    tc(t, 2, r, txt, fg, cBody, tip)
+// text gauges for the monospace cells
+gauge(float frac) =>
+    string out = "░░░░░░░░░░"
+    if not na(frac)
+        int k = int(math.round(math.max(0.0, math.min(1.0, frac)) * 10))
+        out := str.repeat("█", k) + str.repeat("░", 10 - k)
+    out
+// five-cell battery for the mobile card
+gauge5(float frac) =>
+    string out = "░░░░░"
+    if not na(frac)
+        int k = int(math.round(math.max(0.0, math.min(1.0, frac)) * 5))
+        out := str.repeat("█", k) + str.repeat("░", 5 - k)
+    out
+meter(float p) =>
+    string out = "──────────"
+    if not na(p)
+        int k = int(math.round(math.max(0.0, math.min(100.0, p)) / 10.0))
+        out := str.repeat("─", k) + "●" + str.repeat("─", 10 - k)
+    out
+octBar(int o) =>
+    string out = ""
+    for i = 1 to 8
+        out += i == o ? "█" : "░"
+    out
+// where price sits in a range, in octants (1 = bottom eighth … 8 = top eighth)
+octOf(float px, float h, float l) => na(h) or na(l) or h <= l ? na : math.min(8, int(math.floor((px - l) / (h - l) * 8)) + 1)
+zoneOf(float h, float l) =>
+    int    o  = octOf(close, h, l)
+    string z  = na(o) ? "—" : o >= 7 ? "PREMIUM" : o <= 2 ? "DISCOUNT" : "EQUILIB."
+    color  zb = na(o) ? cBody : o >= 7 ? cPrem : o <= 2 ? cDisc : cNeu
+    color  zf = na(o) or (o > 2 and o < 7) ? cTx : #ffffff
+    [o, z, zb, zf]
+zoneTip(int o, float h, float l, string what) =>
+    "This " + what + "'s range so far " + pf(l) + " – " + pf(h) + ": price is " + (na(o) ? "—" : p0((close - l) / (h - l))) + " of the way up (octant " + (na(o) ? "—" : str.tostring(o)) + " of 8), " + (na(l) ? "—" : pf(close - l)) + " above the low and " + (na(h) ? "—" : pf(h - close)) + " below the high. Top quarter (octants 7–8) = premium, bottom quarter (1–2) = discount. A locator, not a tested signal."
+zoneRow(table t, int r, color col, string key, float h, float l, string what) =>
+    [o, z, zb, zf] = zoneOf(h, l)
+    string tip = zoneTip(o, h, l, what)
+    stripe(t, r, col)
+    tc(t, 1, r, key, cMu, cBody, tip, text.align_center)
+    tc(t, 2, r, octBar(o) + "  O" + (na(o) ? "—" : str.tostring(o)) + " · +" + (na(l) ? "—" : pf(close - l)) + " from low", cTx, cBody, tip)
+    tc(t, 3, r, z, zf, zb, tip, text.align_center, true)
+    tc(t, 4, r, na(h) ? "—" : "−" + pf(h - close), cMu, cBody, tip + " Right: distance to the " + what + "'s high.", text.align_center)
+// mobile version: octant bar and a short zone pill
+zoneRowM(table t, int r, color col, string key, float h, float l, string what) =>
+    [o, z, zb, zf] = zoneOf(h, l)
+    string tip = zoneTip(o, h, l, what)
+    stripe(t, r, col)
+    tc(t, 1, r, key, cMu, cBody, tip, text.align_center)
+    tc(t, 2, r, octBar(o) + " O" + (na(o) ? "—" : str.tostring(o)), cTx, cBody, tip)
+    tc(t, 3, r, na(o) ? "—" : o >= 7 ? "PREM" : o <= 2 ? "DISC" : "EQ", zf, zb, tip, text.align_center, true)
+    tc(t, 4, r, na(h) ? "—" : "−" + pf(h - close), cMu, cBody, tip, text.align_center)
+// tally accumulator: 0 count · 1 up · 2 down · 3 RTH up · 4 RTH down · 5 gaps · 6 Σgap · 7 Σ|gap| · 8 Σ|gap %| · 9 gaps up
+talAcc(array<float> acc, int t_, int r_, float g_, float p_) =>
+    acc.set(0, acc.get(0) + 1)
+    acc.set(1, acc.get(1) + (t_ > 0 ? 1 : 0))
+    acc.set(2, acc.get(2) + (t_ < 0 ? 1 : 0))
+    acc.set(3, acc.get(3) + (r_ > 0 ? 1 : 0))
+    acc.set(4, acc.get(4) + (r_ < 0 ? 1 : 0))
+    if not na(g_)
+        acc.set(5, acc.get(5) + 1)
+        acc.set(6, acc.get(6) + g_)
+        acc.set(7, acc.get(7) + math.abs(g_))
+        acc.set(8, acc.get(8) + (na(p_) ? 0.0 : math.abs(p_)))
+        acc.set(9, acc.get(9) + (g_ > 0 ? 1 : 0))
+// built-in event-day records for the tally (NQ / MNQ and ES / MES; other symbols use the chart's own history)
+var array<int>   TEd = array.new<int>()
+var array<int>   TEt = array.new<int>()
+var array<int>   TEr = array.new<int>()
+var array<float> TEg = array.new<float>()
+var array<float> TEp = array.new<float>()
+_isfirst_1() =>
+    string src = isES ? TAL_ES : isNQ ? TAL_NQ : ""
+    if src != ""
+        for rec in str.split(src, ";")
+            array<string> f = str.split(rec, ",")
+            if f.size() >= 3
+                TEd.push(int(str.tonumber(f.get(0))))
+                TEt.push(int(str.tonumber(f.get(1))))
+                TEr.push(int(str.tonumber(f.get(2))))
+                TEg.push(f.size() > 3 ? str.tonumber(f.get(3)) : na)
+                TEp.push(f.size() > 4 ? str.tonumber(f.get(4)) : na)
+if barstate.isfirst
+    _isfirst_1()
+
+// ═══════════════════════════════════════════════════════════════ Draw (last bar)
+// The last bar's values the PO3 candles, the chips and the cards share, set on the last bar. Pine caps the size of one
+// if block (CE10205), so each part below is its own block.
+bool pend = false
+int tKey = na
+int today = na
+int pk = na
+bool pNow = false
+int pDay = na
+int mTy = na
+bool live = false
+bool hasD = false
+float O = na
+color gc = na
+float a = na
+int gw = na
+int xd = na
+int x0 = na
+int xc = na
+int xw = na
+bool hasS = false
+bool shM = false
+float vFac = na
+float mR = na
+float uS = na
+float mH = na
+float mL = na
+float mC = na
+string dot = ""
+int dd = na
+string ev = ""
+string n1t = ""
+int n1k = na
+string n2t = ""
+int n2k = na
+bool warn = false
+array<float> acc = na
+string seq = ""
+int d0 = na
+int nT = na
+int uT = na
+int dT_ = na
+int uR = na
+int dR_ = na
+int nG = na
+float gAvg = na
+float gAbs = na
+string since = ""
+string srcT = ""
+string tTip = ""
+string gTip = ""
+bool vOk = false
+float vsp = na
+float vch = na
+string st = ""
+string bR = ""
+string bA = ""
+bool vDn = false
+bool dOk = false
+float net = na
+float rg = na
+float bigL = na
+bool big = false
+if barstate.islast
+    clearRight()
+if barstate.islast
+    pend := AN == 2 and mod < 570                      // RTH not open yet: the model sits on the last price
+    tKey := pend ? calK : dK
+    today := calK
+    [pk_, pNow_, pDay_] = ownProfile(tKey, pend ? dK : pK, today)
+    pk := pk_
+    pNow := pNow_
+    pDay := pDay_
+    mTy := ownTy(pk)                                  // this indicator's own event, never another event's
+    live := pNow and not pend
+    hasD := not pend and not na(dO)
+    O := hasD ? dO : close
+    gc := pNow ? cGh : color.new(cGh, 55)
+    a := ADR
+    gw := widI + 6
+    xd := bar_index + offI
+    x0 := na(dX) ? na : math.max(dX, bar_index - 4900)   // day start, capped inside the 5000-bar buffer
+    xc := xd + int(gw / 2)
+    xw := xd + gw + gapI
+    hasS := ST.size() == 7 * NF and not na(a) and not na(O)
+    shM := showGh and hasS and (pNow or offDayI == "Next event's model")
+    // model candle: typical range of this event (median), split above / below the open in the ratio of the median
+    // reaches, and the median close
+    // optional VIX sizing: the event's median range scaled by today's VIX against its 20-day average and against ADR20
+    vFac := 1.0
+    if vixSize and not na(vPrev) and not na(vAvg) and vAvg > 0 and not na(ADRtd) and ADRtd > 0
+        float iv = math.log(vPrev / math.sqrt(252.0)) - math.log(ADRtd * 100)
+        float vs = math.log(vPrev / vAvg)
+        vFac := math.exp((isES ? 0.308 : 0.261) * (iv - (isES ? IVRV_ES : IVRV_NQ)) + (isES ? 1.472 : 1.178) * vs)
+    mR := hasS ? sv(mTy, 10) * a * O * vFac : na
+    uS := hasS ? sv(mTy, 3) / math.max(sv(mTy, 3) + sv(mTy, 6), 1e-9) : na
+    mH := O + mR * uS
+    mL := O - mR * (1 - uS)
+    mC := hasS ? O * (1 + sv(mTy, 8) * a * vFac) : na
+if barstate.islast
+    if shM
+        RB.push(box.new(xd + 2, mH, xd + gw - 2, mL, border_color = color.new(gc, 40), border_style = line.style_dotted, bgcolor = color.new(gc, 90), force_overlay = true))
+        RB.push(box.new(xd, math.max(O, mC), xd + gw, math.min(O, mC), border_color = gc, border_width = 1, bgcolor = color.new(gc, 70), force_overlay = true))
+        RL.push(line.new(xd, mH, xd + gw, mH, color = gc, width = 2, force_overlay = true))
+        RL.push(line.new(xd, mL, xd + gw, mL, color = gc, width = 2, force_overlay = true))
+        if showPx
+            pxL(xd, mH, pf(mH), gc)
+            pxL(xd, mL, pf(mL), gc)
+        if showPL and live and not na(x0)
+            RL.push(line.new(x0, mH, xd, mH, color = color.new(gc, 45), style = line.style_dotted, force_overlay = true))
+            RL.push(line.new(x0, mL, xd, mL, color = color.new(gc, 45), style = line.style_dotted, force_overlay = true))
+if barstate.islast
+    if hasD
+        drawCandle(xd + 3, widI, dO, dH, dL, dC)
+        if showPx
+            pxR(xd + gw, dH, pf(dH), cSub)
+            pxR(xd + gw, dL, pf(dL), cSub)
+        if showLv and not na(x0)
+            RL.push(line.new(x0, dO, xd, dO, color = color.new(cWk, 30), style = line.style_dotted, force_overlay = true))
+            RL.push(line.new(x0, dH, xd, dH, color = color.new(cWk, 50), style = line.style_dotted, force_overlay = true))
+            RL.push(line.new(x0, dL, xd, dL, color = color.new(cWk, 50), style = line.style_dotted, force_overlay = true))
+if barstate.islast
+    if showWk and not na(wO)
+        drawCandle(xw, widI, wO, wH, wL, wC)
+        if showPx
+            pxR(xw + widI, wH, pf(wH), cSub)
+            pxR(xw + widI, wL, pf(wL), cSub)
+    // chips
+if barstate.islast
+    if showCh
+        string dHd = (AN == 0 ? "1D" : AN == 1 ? "1D 00:00" : "1D RTH") + " · " + (pNow ? typeShort(mTy) + " DAY" : "next " + typeShort(mTy) + (na(pDay) ? "" : " " + fmtDay(pDay)))
+        string dR  = hasD ? "range " + pf(dH - dL) : "range —"
+        string dM  = hasS ? "model " + pf(mR) + (vFac != 1.0 ? " (VIX ×" + str.tostring(vFac, "0.00") + ")" : "") + (live and hasD and mR > 0 ? " · " + p0((dH - dL) / mR) + " filled" : "") : ""
+        string dTip = hasS ? typeShort(mTy) + " days (" + str.tostring(sv(mTy, 0), "0") + " since 2018): median range " + x2(sv(mTy, 10)) + " ADR20 (middle half " + x2(sv(mTy, 9)) + "–" + x2(sv(mTy, 11)) + "), normal days " + x2(sv(6, 10)) + ". Split above / below the open in the ratio of the median reaches (" + x2(sv(mTy, 3)) + " up, " + x2(sv(mTy, 6)) + " down); the body runs to the median close (" + (sv(mTy, 8) >= 0 ? "+" : "") + x2(sv(mTy, 8)) + "), and " + p0(sv(mTy, 1)) + " of these days closed up. ADR20 = " + pf(a * O) + " pts." + (pNow ? "" : "\nNo " + typeShort(mTy) + " today: this is the next one's model at today's ADR, around today's candle. A size reference, not a forecast.") : "Needs 15+ days of history for ADR20."
+        float yD   = math.max(nz(dH, O), shM ? mH : nz(dH, O))
+        chip(xc, yD, dHd + "\n" + dR + (dM == "" ? "" : "\n" + dM), dTip, true)
+        if showWk and not na(wO)
+            chip(xw + int(widI / 2), wL, "1W\nrange " + pf(wH - wL), "This week so far (CME week, Sunday 18:00 open), in points.", false)
+
+    // ── cards
+if barstate.islast
+    dot := barstate.isrealtime ? (beat % 2 == 0 ? "●" : "○") : "◆"
+    dd := na(pDay) ? na : inDays(pDay, today)
+    ev := typeShort(mTy)
+    [n1t_, n1k_, n2t_, n2k_] = ownNext(today)
+    n1t := n1t_
+    n1k := n1k_
+    n2t := n2t_
+    n2k := n2k_
+    warn := inDays(LAST_DATE, today) < 60
+    // tally of the last N event days (both layouts): this chart's own records first, then built-in ones older than those
+    acc := array.new_float(10, 0.0)
+    seq := ""
+    d0 := na
+    if showEv and evMode == "Tally"
+        if LTd.size() > 0
+            for i = LTd.size() - 1 to 0
+                if acc.get(0) < talN
+                    talAcc(acc, LTt.get(i), LTr.get(i), LTg.get(i), LTp.get(i))
+                    seq := (LTt.get(i) > 0 ? "▲" : LTt.get(i) < 0 ? "▼" : "·") + seq
+                    d0 := LTd.get(i)
+        int oldest = LTd.size() > 0 ? LTd.get(0) : 99999999
+        if TEd.size() > 0
+            for i = TEd.size() - 1 to 0
+                if acc.get(0) < talN and TEd.get(i) < oldest
+                    talAcc(acc, TEt.get(i), TEr.get(i), TEg.get(i), TEp.get(i))
+                    seq := (TEt.get(i) > 0 ? "▲" : TEt.get(i) < 0 ? "▼" : "·") + seq
+                    d0 := TEd.get(i)
+    nT := int(acc.get(0))
+    uT := int(acc.get(1))
+    dT_ := int(acc.get(2))
+    uR := int(acc.get(3))
+    dR_ := int(acc.get(4))
+    nG := int(acc.get(5))
+    gAvg := nG > 0 ? acc.get(6) / nG : na
+    gAbs := nG > 0 ? acc.get(7) / nG : na
+    since := na(d0) ? "" : " since " + str.format_time(keyTime(d0), "MMM yyyy", TZ)
+    srcT := TEd.size() > 0 ? " Built-in " + symR + " records run to " + str.format_time(keyTime(talEnd), "dd MMM yyyy", TZ) + "; later days, and any this chart loads itself, come from the chart's own bars." : " Records come from this chart's own bars (built-in history covers NQ / MNQ and ES / MES)."
+    tTip := "Trading day (18:00 → 17:00) close vs open on the last " + str.tostring(nT) + " " + TAL_NAME + " days, oldest → newest: " + seq + ". RTH (09:30 → 16:14): ▲ " + str.tostring(uR) + " ▼ " + str.tostring(dR_) + ". A tally, not a forecast: across 2018–26 the up-close rate on these days was not different from normal days." + srcT
+    gTip := "RTH gap = 09:30 open − prior trading day's 16:14 close. Average over the last " + str.tostring(nG) + " " + TAL_NAME + " days: " + (na(gAvg) ? "—" : pf(gAvg)) + " pts; average size " + (na(gAbs) ? "—" : pf(gAbs) + " pts (" + str.tostring(acc.get(8) / nG, "0.00") + "%)") + "; gapped up on " + str.tostring(int(acc.get(9))) + " of " + str.tostring(nG) + "."
+    // VIX and DXY readings (both layouts)
+    vOk := not na(vixL) and not na(vPrev) and not na(vAvg) and vAvg > 0 and vPrev > 0
+    vsp := vOk ? vPrev / vAvg - 1 : na
+    vch := vOk ? vixL / vPrev - 1 : na
+    st := na(vsp) ? "—" : vsp >= 0.10 ? "HOT" : vsp <= -0.10 ? "CALM" : "NORMAL"
+    bR := st == "HOT" ? (isES ? "1.37×" : "1.27×") : st == "CALM" ? (isES ? "0.64×" : "0.70×") : st == "NORMAL" ? (isES ? "0.90×" : "0.91×") : "—"
+    bA := st == "HOT" ? (isES ? "76%" : "73%") : st == "CALM" ? (isES ? "10%" : "16%") : st == "NORMAL" ? (isES ? "39%" : "40%") : "—"
+    vDn := vOk and vch < 0
+    dOk := not na(dxL) and not na(dxTdO) and not na(dxAtr) and dxAtr > 0
+    net := dOk ? dxL - dxTdO : na
+    rg := dOk ? dxHi - dxLo : na
+    bigL := dOk ? 0.5 * dxAtr : na
+    big := dOk and math.abs(net) >= bigL
+if barstate.islast
+    if showEv and not na(TS) and rEv >= 0
+        int    r0 = rEv
+        cardHead(TS, r0, cGh, dot + " " + str.upper("Gran Rey Cero") + " · " + ev + " · " + symTag, pfName(pk) + ". Recomputed on " + symR + " 1-minute data 2018–26." + (isNQ or isES ? "" : " This chart is " + syminfo.root + ": the figures are " + symR + "'s."), pNow ? "TODAY" : na(dd) ? "—" : dd == 1 ? "TOMORROW" : "IN " + str.tostring(dd) + "D", pNow ? cGh : #ffffff, pNow ? #ffffff : color.new(#000000, 55))
+        if evMode == "Checklist"
+            cardSub(TS, r0 + 1, cGh, "held 2018–24 and 2025–26", ev, "normal")
+            array<string> rows = str.split(chkRows(pk, isES), "|")
+            for i = 0 to chkMax(isES) - 1
+                if i < rows.size() and rows.get(i) != ""
+                    array<string> f = str.split(rows.get(i), "~")
+                    cardRow(TS, r0 + 2 + i, cGh, "✓", true, f.get(0), f.size() > 1 ? f.get(1) : "", f.size() > 2 ? f.get(2) : "", f.size() > 3 ? f.get(3) : "")
+                else
+                    cardRow(TS, r0 + 2 + i, cGh, "", false, i == 0 ? "nothing held on " + symR : "", "", "", "Every candidate row either failed p < 0.05 over 2018–26 or flipped in 2025–26 on this symbol.")
+        else
+            cardSub(TS, r0 + 1, cGh, "last " + str.tostring(nT) + " " + TAL_NAME + " days" + since, "▲ up", "▼ down")
+            cardRow(TS, r0 + 2, cGh, "DAY", false, gauge(uT + dT_ > 0 ? float(uT) / (uT + dT_) : na) + " " + (uT + dT_ > 0 ? p0(float(uT) / (uT + dT_)) : "—"), "▲ " + str.tostring(uT), "▼ " + str.tostring(dT_), tTip, cDisc, cPrem)
+            cardRow(TS, r0 + 3, cGh, "RTH", false, gauge(uR + dR_ > 0 ? float(uR) / (uR + dR_) : na) + " " + (uR + dR_ > 0 ? p0(float(uR) / (uR + dR_)) : "—"), "▲ " + str.tostring(uR), "▼ " + str.tostring(dR_), "RTH 09:30 → 16:14 close vs open on the same days (days without RTH data are left out).", cDisc, cPrem)
+            cardRow(TS, r0 + 4, cGh, "GAP", false, "avg RTH gap · up " + str.tostring(int(acc.get(9))) + "/" + str.tostring(nG), na(gAvg) ? "—" : (gAvg >= 0 ? "+" : "") + pf(gAvg), na(gAbs) ? "—" : "±" + pf(gAbs), gTip)
+            zoneRow(TS, r0 + 5, cGh, "WEEK", wH, wL, "week")
+            zoneRow(TS, r0 + 6, cGh, "MONTH", moH, moL, "month")
+        cardWide(TS, r0 + EV_N - 1, cGh, "NEXT", (na(n1k) ? "beyond loaded dates" : whenTxt(n1k, today)) + (na(n2k) ? "" : "  →  " + fmtDay(n2k)) + (warn ? " · UPDATE DATES" : ""), n1t + ". Release dates are built in up to " + str.format_time(keyTime(LAST_DATE), "dd MMM yyyy", TZ) + ": add next year's dates (federalreserve.gov, bls.gov/schedule) to S_FOMC, S_CPI and S_NFP, then raise LAST_DATE.", na(n1k) or warn ? cWarn : cTx)
+
+    // ── VIX card: only what held (VIX against its own 20-day average → day range; same-day VIX direction)
+if barstate.islast
+    if showVx and not na(TS) and rVx >= 0
+        int    r0  = rVx
+        cardHead(TS, r0, cVx, dot + " VIX " + (vOk ? str.tostring(vixL, "0.00") + "  " + (vch >= 0 ? "▲ " : "▼ ") + str.tostring(math.abs(vch) * 100, "0.0") + "%" : "— (no data)"), "CBOE VIX, live against its prior close.", st, st == "HOT" or st == "CALM" ? #ffffff : cTx, st == "HOT" ? cHot : st == "CALM" ? cCold : cNeu)
+        cardSub(TS, r0 + 1, cVx, "held 2018–24 and 2025–26", "days ran", "> ADR")
+        cardRow(TS, r0 + 2, cVx, "VIX", false, "vs its 20-day avg " + (na(vsp) ? "—" : (vsp >= 0 ? "+" : "−") + str.tostring(math.abs(vsp) * 100, "0") + "%"), bR, bA, "VIX prior close against its 20-day average. Days with VIX ≥ 10% above it ran a median " + (isES ? "1.37× ADR20 (above ADR on 76% of days)" : "1.27× ADR20 (above ADR on 73% of days)") + "; within ±10% " + (isES ? "0.90× (39%)" : "0.91× (40%)") + "; ≥ 10% below " + (isES ? "0.64× (10%)" : "0.70× (16%)") + ". 2018–24 and 2025–26 alike. Added to a range forecast it lifted the 2025–26 R² from " + (isES ? "0.25 to 0.39" : "0.24 to 0.33") + " (" + symR + "). Range only, no direction.", st == "HOT" ? cHot : st == "CALM" ? cCold : cTx)
+        cardRow(TS, r0 + 3, cVx, "DAY", false, "VIX " + (vDn ? "▼" : "▲") + " today → " + symR + " closed up", vOk ? (vDn ? (isES ? "80%" : "78%") : (isES ? "23%" : "25%")) : "—", "of days", "Same day, 2018–26: " + symR + " closed up (trading day) on " + (isES ? "80%" : "78%") + " of days VIX fell and " + (isES ? "23%" : "25%") + " of days it rose. It describes the day, it does not forecast it.")
+
+    // ── DXY card (last three years: Oct 2023 → Aug 2026, first two years then the last one)
+if barstate.islast
+    if showDx and not na(TS) and rDx >= 0
+        int    r0  = rDx
+        cardHead(TS, r0, cDxc, dot + " DXY " + (dOk ? str.tostring(dxL, "0.00") + "  " + (net >= 0 ? "▲ " : "▼ ") + str.tostring(math.abs(nz(dxDay)) * 100, "0.00") + "%" : "— (no data)"), "DXY since the 18:00 open.", big ? "BIG DAY" : "USUAL DAY", big ? #ffffff : cTx, big ? cHot : cNeu)
+        cardSub(TS, r0 + 1, cDxc, "last 3 years · held in both halves", "this", "other")
+        cardRow(TS, r0 + 2, cDxc, "RANGE", false, gauge(dOk ? rg / dxAtr : na) + " " + (dOk ? p0(rg / dxAtr) : "—") + " of ATR", dOk ? str.tostring(rg, "0.00") : "—", dOk ? "ATR " + str.tostring(dxAtr, "0.00") : "—", "DXY's range since the 18:00 open against its 20-day ATR (completed days): how much of a usual day it has used.")
+        cardRow(TS, r0 + 3, cDxc, "MOVE", false, gauge(dOk ? math.abs(net) / bigL : na) + " " + (dOk ? p0(math.min(1.0, math.abs(net) / bigL)) : "—") + " to big", dOk ? (net >= 0 ? "▲ " : "▼ ") + str.tostring(math.abs(net), "0.00") : "—", dOk ? "big " + str.tostring(bigL, "0.00") : "—", "DXY's net move since the 18:00 open against half its ATR20. A big DXY day = a net move of at least ½ ATR.", big ? cHot : cTx)
+        cardRow(TS, r0 + 4, cDxc, "✓", true, "big DXY day → " + symR + " closed other way", isES ? "65%" : "60%", isES ? "53%" : "50%", "On big DXY days (net move ≥ ½ ATR20) " + symR + " closed the trading day the other way to DXY on " + (isES ? "65% (Oct 2023 – Sep 2025 63%, Oct 2025 – Aug 2026 70%)" : "60% (Oct 2023 – Sep 2025 58%, Oct 2025 – Aug 2026 67%)") + " vs " + (isES ? "53%" : "50%") + " on other days, n ≈ 270. Same day: it describes how the day finishes; from 10:00, 12:00 or 14:00 on, the rest of the day was a coin flip.")
+        cardRow(TS, r0 + 5, cDxc, "✓", true, "DXY 4wk " + (na(dx4) ? "—" : (dx4 >= 0 ? "▲ " : "▼ ") + str.tostring(math.abs(dx4) * 100, "0.0") + "%") + " → day range", na(dx4) ? "—" : dx4 >= 0 ? (isES ? "0.96×" : "0.99×") : (isES ? "0.86×" : "0.88×"), na(dx4) ? "—" : dx4 >= 0 ? (isES ? "0.86×" : "0.88×") : (isES ? "0.96×" : "0.99×"), "Last completed week's 4-week DXY change. After a 4-week rise " + symR + " days ran a median " + (isES ? "0.96× ADR20 vs 0.86×" : "0.99× ADR20 vs 0.88×") + " after a fall (Oct 2023 – Sep 2025 and Oct 2025 – Aug 2026 alike; weekly test p 0.001). Over 2018–24 it did not show, and once VIX is known it adds little.")
+        float ybp = na(ylL) or na(ylPrev) ? na : (ylL - ylPrev) * 100
+        cardRow(TS, r0 + 6, cDxc, "10Y", false, na(ylL) ? "— (no data)" : str.tostring(ylL, "0.000") + "%  " + (na(ybp) ? "" : (ybp >= 0 ? "▲ " : "▼ ") + str.tostring(math.abs(ybp), "0.0") + "bp today"), "", "live", "US 10-year yield, live. Nothing about it held as a range or direction signal here (monthly data only), so it is a readout.")
+
+    // ── mobile card: one narrow table. Header (event · when), NOW (the clock in one row), the held rows in short form or
+    // the tally, then VIX and DXY in one row each. Every row keeps its full explanation in the tooltip.
+if barstate.islast
+    if mob and not na(TM)
+        if showEv and mEv >= 0
+            int    r0  = mEv
+            string bdg = pNow ? "TODAY" : na(dd) ? "—" : dd == 1 ? "TMRW" : str.upper(str.format_time(keyTime(pDay), "EEE d", TZ))
+            string hTip = pfName(pk) + ". Recomputed on " + symR + " 1-minute data 2018–26." + (isNQ or isES ? "" : " This chart is " + syminfo.root + ": the figures are " + symR + "'s.") + " Next: " + (na(n1k) ? "beyond the loaded dates" : whenTxt(n1k, today)) + (na(n2k) ? "" : ", then " + fmtDay(n2k)) + "." + (warn ? " Release dates run out on " + str.format_time(keyTime(LAST_DATE), "dd MMM yyyy", TZ) + ": add next year's to S_FOMC, S_CPI and S_NFP." : "")
+            cardHead(TM, r0, cGh, dot + " " + str.upper("Gran Rey") + " · " + ev + " · " + symTag, hTip, warn ? "UPDATE" : bdg, warn or not pNow ? #ffffff : cGh, warn ? cWarn : pNow ? #ffffff : color.new(#000000, 55))
+            if clkTF and not na(vAdr)
+                float  q50m = ckAt(ckI, mSel, 2, jB, fB)
+                string nTip = "Today so far (" + (clkR ? "range" : "net move") + " from the 18:00 open) against " + ckName(ckI) + " days at this time: median " + pf(q50m * scP) + ", middle half " + pf(q25B * scP) + "–" + pf(q75B * scP) + " pts at today's ADR20 (" + x2(q50m) + " typical, " + x2(vAdr) + " today). Above / below = outside that middle half."
+                cardRow(TM, r0 + 1, cGh, "NOW", false, (clkR ? "range " : "net ") + (clkR or vPts < 0 ? "" : "+") + pf(vPts), x2(vAdr), "", nTip)
+                tc(TM, 4, r0 + 1, str.upper(stB), stB == "Inside" ? cTx : #ffffff, stB == "Above" ? cHot : stB == "Below" ? cCold : cNeu, nTip, text.align_center, true)
+            else
+                cardRow(TM, r0 + 1, cGh, "NOW", false, not clkTF ? "clock: chart ≤ 60 min" : "needs 15+ days", "", "", "")
+            if evMode == "Checklist"
+                array<string> rows = str.split(chkRows(pk, isES), "|")
+                for i = 0 to chkMax(isES) - 1
+                    if i < rows.size() and rows.get(i) != ""
+                        array<string> f = str.split(rows.get(i), "~")
+                        string lab = str.replace_all(str.replace_all(str.replace_all(f.get(0), " (× ADR)", ""), " on the day", ""), " side", "")
+                        cardRow(TM, r0 + 2 + i, cGh, "✓", true, lab, f.size() > 1 ? f.get(1) : "", f.size() > 2 ? f.get(2) : "", (f.size() > 3 ? f.get(3) : "") + " Held 2018–24 and 2025–26; grey = normal days.")
+                    else
+                        cardRow(TM, r0 + 2 + i, cGh, "", false, i == 0 ? "nothing held on " + symR : "", "", "", "")
+            else
+                cardRow(TM, r0 + 2, cGh, "DAY", false, "last " + str.tostring(nT) + " " + gauge5(uT + dT_ > 0 ? float(uT) / (uT + dT_) : na), "▲ " + str.tostring(uT), "▼ " + str.tostring(dT_), tTip, cDisc, cPrem)
+                cardRow(TM, r0 + 3, cGh, "GAP", false, "avg gap · up " + str.tostring(int(acc.get(9))) + "/" + str.tostring(nG), na(gAvg) ? "—" : (gAvg >= 0 ? "+" : "") + pf(gAvg), na(gAbs) ? "—" : "±" + pf(gAbs), gTip)
+                zoneRowM(TM, r0 + 4, cGh, "WK", wH, wL, "week")
+                zoneRowM(TM, r0 + 5, cGh, "MO", moH, moL, "month")
+        if showVx and mVx >= 0
+            string vTip = "VIX " + (vOk ? str.tostring(vixL, "0.00") : "—") + ", prior close " + (na(vPrev) ? "—" : str.tostring(vPrev, "0.00")) + " against its 20-day average " + (na(vAvg) ? "—" : str.tostring(vAvg, "0.00")) + " (" + (na(vsp) ? "—" : (vsp >= 0 ? "+" : "−") + str.tostring(math.abs(vsp) * 100, "0") + "%") + "). Days with VIX ≥ 10% above its average ran a median " + (isES ? "1.37×" : "1.27×") + " ADR20, within ±10% " + (isES ? "0.90×" : "0.91×") + ", ≥ 10% below " + (isES ? "0.64×" : "0.70×") + " (" + symR + ", 2018–24 and 2025–26 alike): today's bucket is " + bR + ", above ADR on " + bA + " of such days. Same day: " + symR + " closed up on " + (isES ? "80%" : "78%") + " of days VIX fell and " + (isES ? "23%" : "25%") + " of days it rose (it describes the day, it does not forecast it)."
+            cardRow(TM, mVx, cVx, "VIX", false, vOk ? str.tostring(vixL, "0.00") + " " + (vch >= 0 ? "▲" : "▼") + str.tostring(math.abs(vch) * 100, "0.0") + "%" : "no data", bR, "", vTip, st == "HOT" ? cHot : st == "CALM" ? cCold : cTx)
+            tc(TM, 4, mVx, st == "NORMAL" ? "NORM" : st, st == "HOT" or st == "CALM" ? #ffffff : cTx, st == "HOT" ? cHot : st == "CALM" ? cCold : cNeu, vTip, text.align_center, true)
+        if showDx and mDx >= 0
+            float  fr   = dOk ? math.min(1.0, math.abs(net) / bigL) : na
+            string xTip = "DXY " + (dOk ? str.tostring(dxL, "0.00") + ", " + (net >= 0 ? "+" : "−") + str.tostring(math.abs(net), "0.00") + " since the 18:00 open; its range so far is " + p0(rg / dxAtr) + " of its 20-day ATR (" + str.tostring(dxAtr, "0.00") + ")" : "—") + ". The battery is the net move against ½ ATR (" + (dOk ? str.tostring(bigL, "0.00") : "—") + "), the line for a big DXY day. On big days " + symR + " closed the trading day the other way to DXY on " + (isES ? "65%" : "60%") + " vs " + (isES ? "53%" : "50%") + " of other days (Oct 2023 – Aug 2026, held in both halves). Same day: it describes how the day finishes."
+            cardRow(TM, mDx, cDxc, "DXY", false, not dOk ? "no data" : big ? symR + " other way " + (isES ? "65%" : "60%") : gauge5(fr) + " " + p0(fr), dOk ? (net >= 0 ? "▲" : "▼") + str.tostring(math.abs(nz(dxDay)) * 100, "0.00") + "%" : "—", "", xTip, big ? cHot : cTx)
+            tc(TM, 4, mDx, big ? "BIG" : "USUAL", big ? #ffffff : cTx, big ? cHot : cNeu, xTip, text.align_center, true)
+
+    // ── clock card
+if barstate.islast
+    if showCk and not na(TK)
+        string bN   = ckName(ckI)
+        string eN   = ckName(ckEvI)
+        string nowT = hhmm(int(math.min(1439.0, (elM + tfM + 1080) % 1440)))
+        int    r0   = tkO
+        cardHead(TK, r0, cGh, dot + " " + str.upper("Gran Rey Cero") + " · CLOCK · " + nowT + " ET", "Today's running range (or net move) from the 18:00 open against the same time of day on " + bN + " days, 2018–26: paths from " + ckN(ckI, isES) + " " + bN + " days" + (ckI != NCK - 1 ? " and " + ckN(NCK - 1, isES) + " normal days" : "") + ", half-hour steps, scaled by today's ADR20" + (scP > 0 ? " (" + pf(scP) + " pts)." : "."), ckEv ? eN + " DAY" : "NORMAL", ckEv ? cGh : #ffffff, ckEv ? #ffffff : color.new(#000000, 55))
+        if not clkTF or na(vAdr)
+            cardRow(TK, r0 + 1, cGh, "CLOCK", false, not clkTF ? "needs an intraday chart ≤ 60 min" : "needs 15+ days of history", "", "", "")
+            cardRow(TK, r0 + 2, cGh, "", false, "", "", "", "")
+            cardRow(TK, r0 + 3, cGh, "", false, "", "", "", "")
+        else
+            float q10 = ckAt(ckI, mSel, 0, jB, fB)
+            float q50 = ckAt(ckI, mSel, 2, jB, fB)
+            float q90 = ckAt(ckI, mSel, 4, jB, fB)
+            float pc  = pctQ(vAdr, q10, q25B, q50, q75B, q90)
+            string mW = clkR ? "range" : "net"
+            color sBg = stB == "Above" ? cHot : stB == "Below" ? cCold : cNeu
+            color sFg = stB == "Inside" ? cTx : #ffffff
+            cardRow(TK, r0 + 1, cGh, "NOW", false, mW + " " + (clkR ? "" : vPts >= 0 ? "+" : "") + pf(vPts) + " pts", x2(vAdr), "", "Today so far, in ADR20 of the trading day.")
+            tc(TK, 4, r0 + 1, pill(stB), sFg, sBg, "Above / below = outside the middle half (25–75%) of " + bN + " days at this time.", text.align_center, true)
+            cardRow(TK, r0 + 2, cGh, "vs " + bN, false, meter(pc) + " " + pTxt(pc), "typ " + x2(q50), "", bN + " days by " + nowT + ": median " + pf(q50 * scP) + ", middle half " + pf(q25B * scP) + "–" + pf(q75B * scP) + " pts (" + mW + ", at today's ADR20).", stB == "Above" ? cHot : stB == "Below" ? cCold : cTx)
+            float sh = ckShAt(ckI, jB, fB)
+            float rgT = tdH - tdL
+            cardRow(TK, r0 + 3, cGh, "DONE", false, gauge(sh) + " " + p0(sh), sh >= 0.25 ? "→ " + pf(rgT / sh) : "—", "pts", "Median share of the final day range already made by this time on " + bN + " days; right: today's range so far ÷ that share, a rough full-day figure (shown from 25% on).")
+        float bestD = -1.0
+        int   bestJ = 0
+        for j = 0 to 45
+            float dj = ck(ckEvI, 0, 2, j) - (j > 0 ? ck(ckEvI, 0, 2, j - 1) : 0.0)
+            if dj > bestD
+                bestD := dj
+                bestJ := j
+        float nD = ck(NCK - 1, 0, 2, bestJ) - (bestJ > 0 ? ck(NCK - 1, 0, 2, bestJ - 1) : 0.0)
+        cardRow(TK, r0 + 4, cGh, "BUSIEST", false, hhmm(stepEnd(bestJ - 1)) + "–" + hhmm(stepEnd(bestJ)), "+" + x2(bestD), "norm +" + x2(nD), "The half hour in which the median running range of " + eN + " days grows most, against normal days in the same half hour.", ckEv ? cGh : cTx)
+
+// ═══════════════════════════════════════════════════════════════ Model-specific cards (their own last-bar blocks: Pine caps the size of one if block)
+
